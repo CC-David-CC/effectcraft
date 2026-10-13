@@ -16,6 +16,8 @@
 // its outgoing side with the curve's out side, In-Out both: a side is eased when it has a
 // neighbouring key (selected or not; the neighbour isn't changed), its speeds scaled to the
 // segment on that side. So a selected pair gets the whole curve, and a single key works too.
+// Roving keys are skipped: they pass speed straight through (their sides stay linear), so an ease
+// set on them wouldn't play.
 //
 // User presets are kept with app.settings (section "Ease Presets", key "userPresets") as JSON:
 // {"version": 1, "presets": [{"name": …, "curve": {"outInfluence", "outSpeed", "inInfluence",
@@ -197,16 +199,20 @@
   }
 
   // Ease the sides `mode` names ("In", "Out" or "In-Out") of every selected keyframe with `c`, in
-  // one undo step: a side with a neighbouring key, scaled to the segment on that side. Returns the
-  // number of keyframes eased.
+  // one undo step: a side with a neighbouring key, scaled to the segment on that side. Returns
+  // {eased, roving}: the number of keyframes eased, and of selected roving keyframes skipped.
   function applyCurve(c, mode) {
-    var keyed = selectedKeyed(), sides = [], keys = 0;
+    var keyed = selectedKeyed(), sides = [], keys = 0, roving = 0;
     var doIn = mode !== "Out", doOut = mode !== "In";
     // Every side and its eases first: the segments are measured before any key changes.
     for (var i = 0; i < keyed.length; i++) {
       var p = keyed[i].prop;
       for (var j = 0; j < keyed[i].keys.length; j++) {
         var k = keyed[i].keys[j], before = sides.length;
+        if (p.keyRoving(k)) {
+          roving++;
+          continue;
+        }
         var s = doIn && k > 1 ? slopes(p, k - 1) : null;
         if (s) sides.push({ prop: p, key: k, out: false, eases: eases(s, c.inSpeed, c.inInfluence) });
         s = doOut && k < p.numKeys ? slopes(p, k) : null;
@@ -214,14 +220,14 @@
         if (sides.length > before) keys++;
       }
     }
-    if (!sides.length) return 0;
+    if (!sides.length) return { eased: 0, roving: roving };
     app.beginUndoGroup("Apply Ease Preset");
     try {
       for (var e = 0; e < sides.length; e++) easeSide(sides[e].prop, sides[e].key, sides[e].out, sides[e].eases);
     } finally {
       app.endUndoGroup();
     }
-    return keys;
+    return { eased: keys, roving: roving };
   }
 
   // The curve between the first selected pair of keyframes (measured on the dimension that
@@ -378,9 +384,11 @@
 
   function apply(c, what) {
     var m = mode.selection ? mode.selection.text : "In-Out";
-    var n = applyCurve(c, m);
+    var r = applyCurve(c, m), n = r.eased;
     var side = m === "In" ? "before it" : m === "Out" ? "after it" : "next to it";
-    status.text = n > 0 ? "Eased " + n + " keyframe(s) (" + m + ") with " + what : "Select keyframes with another keyframe " + side;
+    var skipped = r.roving > 0 ? "skipped " + r.roving + " roving keyframe(s); turn off Roving to ease them" : "";
+    if (n > 0) status.text = "Eased " + n + " keyframe(s) (" + m + ") with " + what + (skipped ? "; " + skipped : "");
+    else status.text = skipped ? "Nothing eased: " + skipped : "Select keyframes with another keyframe " + side;
     return n;
   }
 

@@ -378,6 +378,41 @@ fn the_side_not_eased_keeps_playing_hold_and_auto_bezier() {
     assert!(!close(eased_rot.value_at(at(0.25)).as_f64(), rot.value_at(at(0.25)).as_f64(), 1e-3), "the in side changed");
 }
 
+/// Roving keys pass speed straight through (the engine keeps their sides linear), so an ease set
+/// on one wouldn't play: they are skipped and the panel says so, rather than reporting them eased.
+#[test]
+fn roving_keyframes_are_skipped_and_reported() {
+    let store = Arc::new(MemoryConfig::default());
+    let mut s = session(&store);
+    let l = setup(&mut s);
+    animate(&mut s, l, "transform/position", &[(0.0, json!([0, 0, 0])), (1.0, json!([100, 0, 0])), (2.0, json!([200, 0, 0]))]);
+    animate(&mut s, l, "transform/opacity", &[(0.0, json!(0)), (1.0, json!(100)), (3.0, json!(20))]);
+    ok(&mut s, "app.project.activeItem.layer(1).transform.position.setRovingAtKey(2, true)");
+    let pos = prop(&s, l, "transform/position");
+    assert!(pos.keys[1].roving);
+    let roving_at = pos.keys[1].time.seconds();
+    let win = open_panel(&mut s);
+    // Only the roving key: nothing changes, no undo step.
+    select_keys(&mut s, l, &[("transform/position", roving_at)]);
+    let steps = s.history.undo.len();
+    set(&mut s, win, "presets", json!("Ease In-Out"));
+    assert_eq!(status(&mut s, win), "Nothing eased: skipped 1 roving keyframe(s); turn off Roving to ease them");
+    assert_eq!(s.history.undo.len(), steps);
+    assert_eq!(prop(&s, l, "transform/position").keys, pos.keys);
+    // With an ordinary key: that one is eased, the roving one is counted as skipped.
+    select_keys(&mut s, l, &[("transform/position", roving_at), ("transform/opacity", 1.0)]);
+    set(&mut s, win, "presets", json!("Linear"));
+    set(&mut s, win, "presets", json!("Ease In-Out"));
+    assert_eq!(
+        status(&mut s, win),
+        "Eased 1 keyframe(s) (In-Out) with \u{201c}Ease In-Out\u{201d}; skipped 1 roving keyframe(s); turn off Roving to ease them"
+    );
+    let k = &prop(&s, l, "transform/position").keys[1];
+    assert!(k.roving && k.in_interp == Interp::Linear && k.out_interp == Interp::Linear, "{k:?}");
+    let op = prop(&s, l, "transform/opacity");
+    assert!(eased(op.keys[1].in_ease[0], 0.0, 0.5) && eased(op.keys[1].out_ease[0], 0.0, 0.5));
+}
+
 /// On one key, each side scales to its own segment: per dimension, and along the motion path.
 #[test]
 fn single_keys_scale_each_side_to_its_dimensions_and_motion_path() {

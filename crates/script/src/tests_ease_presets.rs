@@ -180,7 +180,8 @@ fn the_ease_presets_panel_eases_every_selected_pair_in_one_undo_step() {
     assert!(list.as_array().unwrap().iter().any(|e| e["name"] == PANEL && e["panel"] == true && e["source"] == "extension"));
     let steps = s.history.undo.len();
     set(&mut s, win, "presets", json!("Ease In-Out"));
-    assert_eq!(status(&mut s, win), "Eased 3 keyframe pair(s) with \u{201c}Ease In-Out\u{201d}");
+    // In-Out (the default) on every key: each pair gets the whole curve, as before.
+    assert_eq!(status(&mut s, win), "Eased 5 keyframe(s) (In-Out) with \u{201c}Ease In-Out\u{201d}");
     assert_eq!(s.history.undo.len(), steps + 1, "one undo step");
     assert_eq!(s.history.undo.last().map(|(label, _)| label.as_str()), Some("Apply Ease Preset"));
     assert_eq!(s.state.selected_keys, selected, "the keys stay selected for the next preset");
@@ -203,7 +204,7 @@ fn the_ease_presets_panel_eases_every_selected_pair_in_one_undo_step() {
     s.execute("edit.deselectAll", json!({})).unwrap();
     let steps = s.history.undo.len();
     set(&mut s, win, "presets", json!("Linear"));
-    assert_eq!(status(&mut s, win), "Select two or more neighbouring keyframes of a property");
+    assert_eq!(status(&mut s, win), "Select keyframes with another keyframe next to it");
     assert_eq!(s.history.undo.len(), steps);
 }
 

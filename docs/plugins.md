@@ -116,7 +116,9 @@ rest), so one curve fits any duration and change of value.
   change), with its speeds scaled to the segment on that side: per dimension, and along the
   motion path for spatial properties. So a single keyframe works, a selected pair gets the whole
   curve, and the first and last keys ease the side that has a segment. The side not eased keeps
-  playing as it did (a Hold stays a Hold). The keys stay selected, so you can try another.
+  playing as it did (a Hold stays a Hold). Roving keyframes are skipped, and the status says how
+  many: they pass speed straight through, so an ease on one wouldn't play (turn off Roving to
+  ease it). The keys stay selected, so you can try another.
 * The drawing shows the working curve; type its numbers (Out % and Speed, In % and Speed) and
   click Apply, or click From Keys to read the curve between the first selected pair of neighbouring keys.
 * Save keeps the working curve under the typed name (replacing a preset of that name); Rename

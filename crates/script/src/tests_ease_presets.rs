@@ -413,6 +413,65 @@ fn roving_keyframes_are_skipped_and_reported() {
     assert!(eased(op.keys[1].in_ease[0], 0.0, 0.5) && eased(op.keys[1].out_ease[0], 0.0, 0.5));
 }
 
+/// Out alone leaves an auto-Bezier in side playing as it did, and undo and redo restore each state.
+#[test]
+fn out_alone_keeps_the_in_side_playing_through_undo_and_redo() {
+    let store = Arc::new(MemoryConfig::default());
+    let mut s = session(&store);
+    let l = setup(&mut s);
+    animate(&mut s, l, "transform/rotation", &[(0.0, json!(0)), (1.0, json!(90)), (3.0, json!(30))]);
+    ok(
+        &mut s,
+        r#"var r = app.project.activeItem.layer(1).transform.rotation, K = KeyframeInterpolationType;
+        r.setInterpolationTypeAtKey(2, K.BEZIER, K.BEZIER);
+        r.setTemporalAutoBezierAtKey(2, true);"#,
+    );
+    let before = prop(&s, l, "transform/rotation");
+    let win = open_panel(&mut s);
+    select_keys(&mut s, l, &[("transform/rotation", 1.0)]);
+    apply_typed(&mut s, win, "Out", [60.0, 0.0, 33.0, 1.0]);
+    let after = prop(&s, l, "transform/rotation");
+    assert!(eased(after.keys[1].out_ease[0], 0.0, 0.6), "{:?}", after.keys[1].out_ease);
+    for t in [0.25, 0.5, 0.75] {
+        assert!(close(after.value_at(at(t)).as_f64(), before.value_at(at(t)).as_f64(), 1e-6), "the in side at {t}");
+    }
+    assert!(!close(after.value_at(at(2.0)).as_f64(), before.value_at(at(2.0)).as_f64(), 1e-3), "the out side changed");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(prop(&s, l, "transform/rotation").keys, before.keys);
+    s.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(prop(&s, l, "transform/rotation").keys, after.keys);
+}
+
+/// On a curved path, a single key's in and out speeds follow the length of the path on each side
+/// (unequal lengths and durations), and the side not eased plays as it did.
+#[test]
+fn a_single_key_on_a_curved_path_eases_along_each_side() {
+    let store = Arc::new(MemoryConfig::default());
+    let mut s = session(&store);
+    let l = setup(&mut s);
+    animate(&mut s, l, "transform/position", &[(0.0, json!([0, 0, 0])), (1.0, json!([100, 0, 0])), (3.0, json!([100, 300, 0]))]);
+    let before = prop(&s, l, "transform/position");
+    let (len_in, len_out) = (effectcraft_keyframe::spatial_segment_length(&before.keys, 0), effectcraft_keyframe::spatial_segment_length(&before.keys, 1));
+    let win = open_panel(&mut s);
+    select_keys(&mut s, l, &[("transform/position", 1.0)]);
+    apply_typed(&mut s, win, "In", [40.0, 1.5, 50.0, 2.0]);
+    let pos = prop(&s, l, "transform/position");
+    let k = &pos.keys[1];
+    // In speed: twice the incoming segment's average (its path length over 1 s).
+    assert!(k.in_ease.iter().all(|e| close(e.speed, 2.0 * len_in, 0.05 * len_in) && close(e.influence, 0.5, 1e-9)), "{:?} vs {len_in}", k.in_ease);
+    // The out side (2 s along a longer path) plays as before.
+    for t in [1.5, 2.0, 2.5] {
+        let (a, b) = (pos.value_at(at(t)).as_vec2(), before.value_at(at(t)).as_vec2());
+        assert!(close(a[0], b[0], 1e-6) && close(a[1], b[1], 1e-6), "out side at {t}: {a:?} vs {b:?}");
+    }
+    // Playback on the in side: arriving at twice the average speed, the last tenth of a second
+    // covers more of the path than a constant speed would (len_in / 10).
+    let (p9, p10) = (pos.value_at(at(0.9)).as_vec2(), pos.value_at(at(1.0)).as_vec2());
+    let step = ((p10[0] - p9[0]).powi(2) + (p10[1] - p9[1]).powi(2)).sqrt();
+    assert!(step > len_in / 10.0 * 1.2, "{step} vs {len_in}");
+    assert!(len_out > len_in, "{len_out} {len_in}");
+}
+
 /// On one key, each side scales to its own segment: per dimension, and along the motion path.
 #[test]
 fn single_keys_scale_each_side_to_its_dimensions_and_motion_path() {

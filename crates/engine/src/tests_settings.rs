@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::config::{ConfigStore, DirConfig, MemoryConfig, atomic_write, atomic_write_with, temp_path};
+use crate::config::{ConfigStore, DirConfig, MemoryConfig, atomic_write, atomic_write_with};
 use crate::prefs::{PREFS_FILE, Prefs};
 use crate::shortcuts::{DEFAULT_PRESET, Keymaps, normalize};
 use crate::{Session, autosave};
@@ -560,12 +560,62 @@ fn atomic_write_survives_a_crash_mid_write() {
     });
     assert!(r.is_err());
     assert_eq!(std::fs::read(&f).unwrap(), b"version 1");
-    assert!(!temp_path(&f).exists(), "the partial temp file is cleaned up");
+    let leftovers: Vec<String> =
+        std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n != "p.ecproj").collect();
+    assert!(leftovers.is_empty(), "the partial temporary is cleaned up: {leftovers:?}");
     // A temp file left by a hard kill doesn't count as an auto-save.
     std::fs::write(d.join("p auto-save 1.ecproj.tmp"), b"junk").unwrap();
     assert!(autosave::existing(&d, "p").is_empty());
     atomic_write(&f, b"version 3").unwrap();
     assert_eq!(std::fs::read(&f).unwrap(), b"version 3");
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_does_not_follow_a_planted_temporary_symlink() {
+    let d = tmp("atomic-link");
+    let f = d.join("p.ecproj");
+    let sentinel = d.join("sentinel.txt");
+    std::fs::write(&sentinel, b"precious").unwrap();
+    // Someone plants a symlink at the temporary name the write used to go through.
+    std::os::unix::fs::symlink(&sentinel, d.join("p.ecproj.tmp")).unwrap();
+    atomic_write(&f, b"new").unwrap();
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"precious", "a symlink at the temporary name is never followed");
+    assert_eq!(std::fs::read(&f).unwrap(), b"new");
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_writes_in_parallel_never_publish_a_mixture() {
+    use std::sync::{Arc, Barrier};
+    let d = tmp("atomic-race");
+    let f = d.join("p.ecproj");
+    let a = vec![b'A'; 64];
+    let b = vec![b'B'; 64];
+    // Writer A writes the first half of its temporary, then waits while writer B runs against
+    // the same destination, and only then finishes.
+    let (half, published) = (Arc::new(Barrier::new(2)), Arc::new(Barrier::new(2)));
+    let (f2, a2) = (f.clone(), a.clone());
+    let (half2, published2) = (half.clone(), published.clone());
+    let t = std::thread::spawn(move || {
+        atomic_write_with(&f2, &a2, |tmp, data| {
+            use std::io::Write;
+            let mut fh = std::fs::File::create(tmp)?;
+            fh.write_all(&data[..32])?;
+            half2.wait();
+            published2.wait();
+            fh.write_all(&data[32..])?;
+            fh.sync_all()
+        })
+    });
+    half.wait();
+    atomic_write(&f, &b).unwrap();
+    published.wait();
+    let _ = t.join();
+    let got = std::fs::read(&f).unwrap();
+    assert!(got == a || got == b, "the destination holds one complete write, never a mixture: {}", String::from_utf8_lossy(&got));
     let _ = std::fs::remove_dir_all(d);
 }
 

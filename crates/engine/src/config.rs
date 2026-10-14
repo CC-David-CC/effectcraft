@@ -164,10 +164,15 @@ impl ConfigStore for DirConfig {
     }
 }
 
-/// The temporary file an atomic write of `path` goes through.
+/// The temporary file an atomic write of `path` goes through. Unique per call (process id plus a
+/// counter), so two writers saving the same destination never share a temporary — one cannot
+/// truncate, rename or clean up another's — and there is no predictable name for a pre-existing
+/// file or symlink to sit at.
 pub fn temp_path(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    name.push(".tmp");
+    name.push(format!(".{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     path.with_file_name(name)
 }
 
@@ -177,19 +182,30 @@ pub fn temp_path(path: &Path) -> PathBuf {
 pub fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     atomic_write_with(path, data, |tmp, data| {
         use std::io::Write;
-        let mut f = std::fs::File::create(tmp)?;
+        // Exclusive creation: an entry already at the temporary's name (a leftover from a crashed
+        // writer, or something planted there) is never opened, truncated or written through.
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(tmp)?;
         f.write_all(data)?;
         f.sync_all()
     })
 }
 
-/// [`atomic_write`] with an injectable temp-file writer (tests simulate a crash mid-write). A
-/// failed write removes the temporary file and leaves `path` untouched.
-pub fn atomic_write_with(path: &Path, data: &[u8], write: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>) -> std::io::Result<()> {
-    let tmp = temp_path(path);
-    if let Err(e) = write(&tmp, data) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
+/// [`atomic_write`] with an injectable temp-file writer (tests simulate a crash mid-write). The
+/// temporary belongs to this call alone: the writer must create it exclusively, and a failed
+/// write removes only its own temporary and leaves `path` untouched. An `AlreadyExists` from the
+/// writer means the name was taken (never opened by us): that entry is left alone and another
+/// unique name is tried.
+pub fn atomic_write_with(path: &Path, data: &[u8], mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>) -> std::io::Result<()> {
+    for _ in 0..16 {
+        let tmp = temp_path(path);
+        match write(&tmp, data) {
+            Ok(()) => return std::fs::rename(&tmp, path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
     }
-    std::fs::rename(&tmp, path)
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, format!("{}: no free temporary name", path.display())))
 }

@@ -570,7 +570,7 @@ async function openFolder(handle, remember) {
   if (remember) {
     try {
       const db = await handlesDb();
-      await req(db.transaction("folders", "readwrite").objectStore("folders").put({ name, handle }));
+      await write(db, "folders", (s) => s.put({ name, handle }));
     } catch (e) { console.info("media browser: cannot remember the folder", e); }
   }
   return { name, entries };
@@ -622,7 +622,7 @@ export async function browseForget(name) {
   folders.delete(name);
   try {
     const db = await handlesDb();
-    await req(db.transaction("folders", "readwrite").objectStore("folders").delete(name));
+    await write(db, "folders", (s) => s.delete(name));
   } catch {}
 }
 

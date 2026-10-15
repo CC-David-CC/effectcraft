@@ -164,48 +164,50 @@ impl ConfigStore for DirConfig {
     }
 }
 
-/// The temporary file an atomic write of `path` goes through. Unique per call (process id plus a
-/// counter), so two writers saving the same destination never share a temporary — one cannot
-/// truncate, rename or clean up another's — and there is no predictable name for a pre-existing
-/// file or symlink to sit at.
-pub fn temp_path(path: &Path) -> PathBuf {
+/// A new, empty temporary file next to `path` for an atomic write of it, and its path. The name
+/// is unique to this process and this write (`.effectcraft-<pid>-<n>.tmp`) and the file is created
+/// exclusively, so two writers never share one and nothing already at that name (a file, a
+/// symbolic link) is opened or followed (#1233). It ends in `.tmp`, so a file left by a hard
+/// kill never counts as an auto-save. Its bounded name does not include the destination's name,
+/// so a valid long destination name still fits the filesystem's component limit.
+fn create_temp(path: &Path) -> std::io::Result<(std::fs::File, PathBuf)> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    name.push(format!(".{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-    path.with_file_name(name)
+    let mut last = None;
+    for _ in 0..16 {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_file_name(format!(".effectcraft-{}-{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(f) => return Ok((f, tmp)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("no free temporary file name")))
 }
 
 /// Write `data` to `path` atomically: write a temporary file next to it, flush it to disk, then
 /// rename it over `path`. A crash at any point leaves either the old file or the new one, never a
-/// torn file.
+/// torn file, and concurrent writers each publish a whole file of their own.
 pub fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    atomic_write_with(path, data, |tmp, data| {
+    atomic_write_with(path, data, |f, data| {
         use std::io::Write;
-        // Exclusive creation: an entry already at the temporary's name (a leftover from a crashed
-        // writer, or something planted there) is never opened, truncated or written through.
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(tmp)?;
         f.write_all(data)?;
         f.sync_all()
     })
 }
 
-/// [`atomic_write`] with an injectable temp-file writer (tests simulate a crash mid-write). The
-/// temporary belongs to this call alone: the writer must create it exclusively, and a failed
-/// write removes only its own temporary and leaves `path` untouched. An `AlreadyExists` from the
-/// writer means the name was taken (never opened by us): that entry is left alone and another
-/// unique name is tried.
-pub fn atomic_write_with(path: &Path, data: &[u8], mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>) -> std::io::Result<()> {
-    for _ in 0..16 {
-        let tmp = temp_path(path);
-        match write(&tmp, data) {
-            Ok(()) => return std::fs::rename(&tmp, path),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(e);
-            }
-        }
+/// [`atomic_write`] with an injectable temp-file writer (tests simulate a crash mid-write); it is
+/// given the temporary file, already created. A failed write or rename removes the temporary
+/// file and leaves `path` untouched.
+pub fn atomic_write_with(path: &Path, data: &[u8], write: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>) -> std::io::Result<()> {
+    let (mut f, tmp) = create_temp(path)?;
+    let written = write(&mut f, data);
+    // Closed before the rename (Windows can't rename an open file).
+    drop(f);
+    if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
-    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, format!("{}: no free temporary name", path.display())))
+    Ok(())
 }

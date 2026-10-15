@@ -3796,7 +3796,7 @@ fn prop_menu(
 ) {
     let (l, uid) = (layer.id.0, prop.uid);
     let mut item = |ui: &mut egui::Ui, key: &str, label: &str, selected: bool, cmd: &str, params: serde_json::Value| {
-        let resp = ui.add(egui::Button::new(label).selected(selected));
+        let resp = ui.add(egui::Button::new(crate::i18n::context_item(cmd, &params, label)).selected(selected));
         auto.add(&format!("timeline.prop.{uid}.menu.{key}"), resp.rect, label);
         if resp.clicked() {
             actions.push((cmd.into(), params));
@@ -4570,6 +4570,39 @@ mod tests {
         for label in ["Layer Settings…", "Duplicate", "Delete"] {
             assert!(english.iter().any(|t| t == label), "{label} missing from {english:?}");
         }
+        assert!(actions.is_empty());
+    }
+
+    /// The property context menu draws its items in the interface language too: the commands the
+    /// menu bar has from its rows, Reset, Edit Value… and Remove Expression from the panel catalog.
+    /// The automation labels stay English.
+    #[test]
+    fn the_property_context_menu_draws_in_the_interface_language() {
+        let mut s = effectcraft_engine::Session::default();
+        s.execute("comp.new", json!({"name": "Main", "width": 64, "height": 64, "duration": 4})).unwrap();
+        let l = s.execute("layer.newSolid", json!({"name": "Plate", "color": "#406080"})).unwrap()["layer"].as_u64().unwrap();
+        let opacity = s.active_comp().unwrap().layer(LayerId(l)).unwrap().props.prop("transform/opacity").unwrap().uid;
+        s.execute("prop.setExpression", json!({"layer": l, "prop": opacity})).unwrap();
+        let comp = s.active_comp_id().unwrap();
+        let layer = s.active_comp().unwrap().layer(LayerId(l)).unwrap().clone();
+        let (position, opacity) = (layer.props.prop("transform/position").unwrap(), layer.props.prop("transform/opacity").unwrap());
+        let (mut auto, mut actions) = (crate::automation::Registry::default(), Vec::new());
+        let mut menu = |language| {
+            crate::i18n::set_current(language);
+            let mut drawn = drawn_text(|ui| prop_menu(ui, &mut auto, comp, &layer, position, &mut actions));
+            drawn.extend(drawn_text(|ui| prop_menu(ui, &mut auto, comp, &layer, opacity, &mut actions)));
+            drawn
+        };
+        let chinese = menu("zh-hans");
+        let english = menu("en");
+        for label in ["重置", "编辑值…", "单独尺寸", "添加表达式", "移除表达式", "向基本图形添加属性"] {
+            assert!(chinese.iter().any(|t| t == label), "{label} missing from {chinese:?}");
+        }
+        assert!(!chinese.iter().any(|t| t.is_ascii()), "English left in {chinese:?}");
+        for label in ["Reset", "Edit Value…", "Separate Dimensions", "Remove Expression", "Add Property to Essential Graphics"] {
+            assert!(english.iter().any(|t| t == label), "{label} missing from {english:?}");
+        }
+        assert!(auto.elements.iter().any(|e| e.label == "Remove Expression"), "the automation label stays English");
         assert!(actions.is_empty());
     }
 

@@ -527,8 +527,9 @@ fn resolve_in(family: &str, style: &str) -> Option<Resolved> {
         return None;
     }
     let instance_named = |f: &Face, name: &str| f.info.instances.iter().position(|i| i.style.eq_ignore_ascii_case(name)).and_then(|i| u16::try_from(i).ok());
+    // A face's own style (a variable face's is its default instance) needs no axis values.
     if let Some(f) = fam.iter().find(|f| f.info.style.eq_ignore_ascii_case(style)) {
-        return Some(Resolved { face: f.id, synth_bold: false, synth_italic: false, missing: false, instance: instance_named(f, style) });
+        return Some(Resolved { face: f.id, synth_bold: false, synth_italic: false, missing: false, instance: None });
     }
     // A named instance of a variable face (`Figtree` `Black`): that face at the instance's axis
     // values, not the nearest static weight made bold synthetically.
@@ -574,8 +575,7 @@ fn resolve_by_name(name: &str) -> Option<Resolved> {
         .or_else(|| faces.iter().find(|f| f.info.full_name.eq_ignore_ascii_case(name)))
     {
         // A variable face's own name is its default instance's (`Figtree-Light`).
-        let instance = f.info.instances.iter().position(|i| i.style.eq_ignore_ascii_case(&f.info.style));
-        return Some(found(f, instance));
+        return Some(found(f, None));
     }
     // A named instance of a variable face, by its PostScript name (`Figtree-Black`, what After
     // Effects scripts use) or its full name (`Figtree Black`).
@@ -1051,8 +1051,9 @@ mod tests {
         assert!(!black.missing && !black.synth_bold && !black.synth_italic, "{black:?}");
         assert_eq!(wght(&black), vec![("wght".to_string(), 900.0)]);
         assert_eq!(wght(&resolve(FAMILY, "regular")), vec![("wght".to_string(), 400.0)]);
-        // The face's own style is the default instance.
-        assert_eq!(wght(&resolve(FAMILY, "Light")), vec![("wght".to_string(), 300.0)]);
+        // The face's own style is its default instance: no axis values to set.
+        let light = resolve(FAMILY, "Light");
+        assert_eq!((light.face, light.instance), (black.face, None));
         // A style the family lacks takes the nearest instance's weight, no synthetic bold.
         let bold = resolve(FAMILY, "Bold");
         assert!(!bold.synth_bold, "{bold:?}");

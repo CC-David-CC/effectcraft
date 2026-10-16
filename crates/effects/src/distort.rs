@@ -164,7 +164,10 @@ fn wave_warp(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let kind = ctx.params.e("waveType");
     let pin = ctx.params.e("pinning");
     let seed = ctx.seed ^ 0x3a7e;
-    let (dx, dy) = (dir.sin(), -dir.cos());
+    // Cardinal directions must not acquire a tiny perpendicular slope: at a square-wave
+    // boundary cos(90°)'s rounding residue can flip a whole column on CPU but not GPU.
+    let axis = |v: f64| if v.abs() < 4.0 * f64::EPSILON { 0.0 } else { v };
+    let (dx, dy) = (axis(dir.sin()), -axis(dir.cos()));
     if !ctx.adjustment {
         b.pad(h.abs().ceil() as u32 + 1);
     }

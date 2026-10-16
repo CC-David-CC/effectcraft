@@ -766,19 +766,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             let cp = lp.with_clip_rect(cell);
             let txt = match *key {
                 "type" => it.type_name().to_string(),
-                "size" => {
-                    let size = file_size(it);
-                    let text = size.map(fmt_size).unwrap_or_else(|| if matches!(it.kind, ItemKind::Footage(_)) { "—".into() } else { String::new() });
-                    if matches!(it.kind, ItemKind::Footage(_)) {
-                        let detail = match size {
-                            Some(bytes) => crate::i18n::tr_args("File size: {} bytes", &[&bytes]),
-                            None => crate::i18n::tr("File size unavailable").to_string(),
-                        };
-                        let resp = ui.interact(cell, egui::Id::new(("psize", id.0)), Sense::hover()).on_hover_text(detail.as_str());
-                        app.auto.add_response(&format!("project.item.{}.size", id.0), &resp, &detail);
-                    }
-                    text
-                }
+                "size" => file_size(it).map(fmt_size).unwrap_or_default(),
                 "duration" => it.duration().map(|d| fmt_dur(d.seconds(), it.frame_rate().map(|r| r.as_f64()).unwrap_or(30.0))).unwrap_or_default(),
                 "fps" => it.frame_rate().map(|f| format!("{:.2}", f.as_f64())).unwrap_or_default(),
                 "path" => file_path(it).to_string(),
@@ -1224,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "filesystem benchmark; run scripts/bench-project-size-sort.sh"]
+    #[ignore = "filesystem benchmark; run with --ignored --nocapture"]
     fn size_sort_benchmark() {
         let files = SizeFiles::new();
         let mut project = Project::default();

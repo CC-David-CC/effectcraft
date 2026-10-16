@@ -369,7 +369,7 @@ impl<'a> Resolver<'a> {
                 let l = self.layer(*comp, *layer)?;
                 let g = if group.is_empty() { &l.props } else { l.props.group(group)? };
                 let n = find_child(g, key)?;
-                let index = g.children.iter().position(|c| c.uid() == n.uid()).map_or(1, |i| i + 1);
+                let index = g.children.iter().position(|c| c.uid() == n.uid()).unwrap_or(0) + 1;
                 let path = if group.is_empty() { format!("@{}", n.uid()) } else { format!("{group}/@{}", n.uid()) };
                 node_resp(path, n, index)
             }
@@ -392,8 +392,8 @@ impl<'a> Resolver<'a> {
                     1 => &l.props,
                     _ => l.props.group(&segs.get(..keep - 1)?.join("/"))?,
                 };
-                let last = segs.get(keep - 1)?;
-                let index = parent.children.iter().position(|c| format!("@{}", c.uid()) == *last)?;
+                let uid = segs.get(keep - 1)?.strip_prefix('@')?.parse::<u64>().ok()?;
+                let index = parent.children.iter().position(|c| c.uid() == uid)?;
                 let n = parent.children.get(index)?;
                 node_resp(group_path, n, index + 1)
             }

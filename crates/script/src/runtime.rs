@@ -346,7 +346,17 @@ pub(crate) fn normalize(p: &str) -> std::path::PathBuf {
     // Resolve symlinks where the file (or its folder) exists, so links can't escape the project.
     std::fs::canonicalize(&out)
         .or_else(|_| out.parent().map(std::fs::canonicalize).unwrap_or(Ok(out.clone())).map(|d| d.join(out.file_name().unwrap_or_default())))
+        .map(without_verbatim_prefix)
         .unwrap_or(out)
+}
+
+/// A canonical Windows drive path without its `\\?\` prefix, so it compares with a lexical one
+/// (a path whose folder doesn't exist on disk stays lexical).
+fn without_verbatim_prefix(p: std::path::PathBuf) -> std::path::PathBuf {
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(plain) if plain.as_bytes().get(1) == Some(&b':') => plain.into(),
+        _ => p,
+    }
 }
 
 pub(crate) const GATE: &str = "Preferences ▸ Scripting & Expressions ▸ Allow Scripts to Write Files and Access Network";
@@ -843,5 +853,15 @@ mod nesting_tests {
         assert!(out.error.is_none(), "{:?}", out.error);
         assert_eq!(out.result, serde_json::json!(2));
         assert!(check_nesting(&("(".repeat(MAX_NESTING) + &")".repeat(MAX_NESTING))).is_ok());
+    }
+
+    /// A canonical drive path and a lexical one compare once the `\\?\` prefix is gone; a UNC
+    /// share and a Unix path are left as they are.
+    #[test]
+    fn only_a_verbatim_drive_prefix_is_dropped() {
+        use std::path::PathBuf;
+        assert_eq!(without_verbatim_prefix(r"\\?\C:\proj\a.txt".into()), PathBuf::from(r"C:\proj\a.txt"));
+        assert_eq!(without_verbatim_prefix(r"\\?\UNC\server\share\a.txt".into()), PathBuf::from(r"\\?\UNC\server\share\a.txt"));
+        assert_eq!(without_verbatim_prefix("/proj/a.txt".into()), PathBuf::from("/proj/a.txt"));
     }
 }

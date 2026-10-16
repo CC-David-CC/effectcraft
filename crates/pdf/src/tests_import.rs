@@ -276,6 +276,11 @@ fn inline_image_with_absurd_dimensions_falls_back_to_ei_scan() {
     let doc = parse(&bytes).unwrap();
     let _ = render(&doc);
     assert!(!doc.skipped.is_empty());
+    // A length just under `usize::MAX` passes the row math; past byte 4096 of the content the
+    // caller's `start + len` would then overflow.
+    let content = format!("{}q 10 0 0 10 0 0 cm BI /W 2305843009213693440 /H 8 /CS /G /BPC 8 ID   EI Q", " ".repeat(5000));
+    let doc = parse(&page_pdf(&content, "", vec![])).unwrap();
+    let _ = render(&doc);
 }
 
 #[test]

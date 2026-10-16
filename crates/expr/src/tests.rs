@@ -1285,3 +1285,5 @@ fn layer_control_property_stands_for_its_layer() {
     assert_close!(f.num("effect('Map')(1).transform.scale[0]", 0.0), 100.0);
     assert_close!(f.num("effect('Map')(1).value.name == 'B' ? 1 : 0", 0.0), 1.0);
 }
+
+mod property_group;

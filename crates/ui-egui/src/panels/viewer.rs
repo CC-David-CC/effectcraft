@@ -976,6 +976,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let selected = app.session.state.selected_layers.clone();
     // Bounding-box handles: (layer, handle, screen point, its resize cursor).
     let mut handle_hits: Vec<(LayerId, usize, Pos2, egui::CursorIcon)> = Vec::new();
+    // 3D gizmo arrows: (layer, grabbable screen segment, position change per comp px in x and y).
+    let mut axis_hits: Vec<(LayerId, [Pos2; 2], [f64; 3], [f64; 3])> = Vec::new();
     let mut vertex_hits: Vec<VertexHit> = Vec::new();
     let mut vertex_marks: Vec<ov::VertexMark> = Vec::new();
     let mut key_hits: Vec<ov::KeyHit> = Vec::new();
@@ -1068,14 +1070,29 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     let pc = cam_state(&ectx).projection(cw as f64, ch as f64) * w;
                     let a3 = effectcraft_engine::geom::vec3(a[0], a[1], a[2]);
                     let len = 60.0 / zoom as f64;
-                    for (axis, col) in [
-                        (effectcraft_engine::geom::vec3(len, 0.0, 0.0), Color32::from_rgb(0xe0, 0x50, 0x50)),
-                        (effectcraft_engine::geom::vec3(0.0, len, 0.0), Color32::from_rgb(0x60, 0xd0, 0x60)),
-                        (effectcraft_engine::geom::vec3(0.0, 0.0, len), Color32::from_rgb(0x50, 0x8c, 0xf0)),
+                    let pinv = parent_world_inverse(&ectx, l);
+                    for (axis, col, name) in [
+                        (effectcraft_engine::geom::vec3(len, 0.0, 0.0), Color32::from_rgb(0xe0, 0x50, 0x50), "x"),
+                        (effectcraft_engine::geom::vec3(0.0, len, 0.0), Color32::from_rgb(0x60, 0xd0, 0x60), "y"),
+                        (effectcraft_engine::geom::vec3(0.0, 0.0, len), Color32::from_rgb(0x50, 0x8c, 0xf0), "z"),
                     ] {
                         // (clipped at the camera's near plane, #572)
-                        if let Some([o, e]) = project_segment(&pc, a3, a3 + axis) {
-                            painter.arrow(map.to_screen(o), map.to_screen(e) - map.to_screen(o), Stroke::new(2.0, col));
+                        let Some([o, e]) = project_segment(&pc, a3, a3 + axis) else { continue };
+                        // An axis pointing at the camera (Z in the default front view) projects to
+                        // a dot: draw it as a short diagonal stub so it can still be grabbed.
+                        let mut s = [e[0] - o[0], e[1] - o[1]];
+                        if (s[0] * s[0] + s[1] * s[1]).sqrt() * (zoom as f64) < 12.0 {
+                            let k = 24.0 / zoom as f64;
+                            s = [k, -k];
+                        }
+                        let (so, se) = (map.to_screen(o), map.to_screen([o[0] + s[0], o[1] + s[1]]));
+                        painter.arrow(so, se - so, Stroke::new(2.0, col));
+                        if !l.switches.locked {
+                            let dir = pinv.apply_vec(w.apply_vec(axis));
+                            let (ax, ay) = axis_drag([dir.x, dir.y, dir.z], s);
+                            // The inner part stays on the anchor point, which drags the layer freely.
+                            axis_hits.push((l.id, [so + (se - so) * 0.35, se], ax, ay));
+                            app.auto.add(&format!("viewer.gizmo.{}.{name}", l.id.0), Rect::from_center_size(se, vec2(12.0, 12.0)), "3D axis");
                         }
                     }
                 }
@@ -1342,6 +1359,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     egui::CursorIcon::PointingHand
                 } else if let Some((.., cursor)) = handle_hits.iter().find(|(_, _, h, _)| h.distance(hp) < HANDLE) {
                     *cursor
+                } else if axis_at(&axis_hits, hp).is_some() {
+                    egui::CursorIcon::Move
                 } else {
                     egui::CursorIcon::Default
                 }
@@ -1549,6 +1568,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                                 .collect(),
                         })
                     })
+                } else if let Some((lid, _, ax, ay)) = axis_at(&axis_hits, press) {
+                    // A gizmo arrow: move along that axis only, without snapping.
+                    let p0 = comp.layer(lid).and_then(|l| Some(ectx.v3(l, l.transform()?, "position", [0.0; 3])));
+                    p0.map(|p0| Gesture::Move { layers: vec![(lid, p0, ax, ay)], start: cpt, snap_src: None })
                 } else if let Some(l) = pick(app, &ectx, cpt, mods.shift) {
                     let layers: Vec<(LayerId, [f64; 3], [f64; 3], [f64; 3])> = app
                         .session
@@ -2033,6 +2056,31 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
+/// The position change per comp pixel of drag (x, y) that moves a layer by `dir` when the
+/// pointer covers the axis' on-screen vector `s` (comp px); drag across the axis is ignored.
+fn axis_drag(dir: [f64; 3], s: [f64; 2]) -> ([f64; 3], [f64; 3]) {
+    let n = (s[0] * s[0] + s[1] * s[1]).max(1e-12);
+    (dir.map(|v| v * s[0] / n), dir.map(|v| v * s[1] / n))
+}
+
+/// The gizmo arrow under screen point `p`.
+fn axis_at(hits: &[(LayerId, [Pos2; 2], [f64; 3], [f64; 3])], p: Pos2) -> Option<(LayerId, [Pos2; 2], [f64; 3], [f64; 3])> {
+    let dist = |[a, b]: [Pos2; 2]| {
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+        p.distance(a + ab * t)
+    };
+    hits.iter().filter(|h| dist(h.1) < 6.0).min_by(|a, b| dist(a.1).total_cmp(&dist(b.1))).copied()
+}
+
+/// World to parent space for a 3D layer (identity without a parent).
+fn parent_world_inverse(ctx: &EvalCtx, l: &Layer) -> effectcraft_engine::geom::Mat4 {
+    match l.parent.and_then(|p| ctx.comp.layer(p)) {
+        Some(p) => ctx.world_matrix(p).inverse().unwrap_or_default(),
+        None => effectcraft_engine::geom::Mat4::IDENTITY,
+    }
+}
+
 /// Parent-space position change per comp pixel of drag (x and y) for a layer: 2D layers map
 /// through the parent transform; 3D layers move in the view plane at their depth.
 fn drag_axes(ctx: &EvalCtx, l: &Layer) -> ([f64; 3], [f64; 3]) {
@@ -2046,10 +2094,7 @@ fn drag_axes(ctx: &EvalCtx, l: &Layer) -> ([f64; 3], [f64; 3]) {
     let anchor = l.transform().map(|tr| ctx.v3(l, tr, "anchor", [0.0; 3])).unwrap_or([0.0; 3]);
     let wp = ctx.world_matrix(l).apply(anchor.into());
     let k = if cam.ortho { 1.0 / cam.zoom.max(1e-9) } else { cam.depth(wp).max(1.0) / cam.zoom.max(1e-9) };
-    let pinv = match l.parent.and_then(|p| ctx.comp.layer(p)) {
-        Some(p) => ctx.world_matrix(p).inverse().unwrap_or_default(),
-        None => effectcraft_engine::geom::Mat4::IDENTITY,
-    };
+    let pinv = parent_world_inverse(ctx, l);
     let a = pinv.apply_vec(cam.right() * k);
     let b = pinv.apply_vec(cam.down() * k);
     ([a.x, a.y, a.z], [b.x, b.y, b.z])
@@ -2790,6 +2835,15 @@ mod tests {
         // above (negative y) instead, and the front corners stay where they were.
         assert!(crossing.iter().all(|p| p[0].is_finite() && p[1].is_finite() && p[1] < 34.0), "{crossing:?}");
         assert!(project_clipped(&m, &box_corners([-50.0, -400.0, 50.0, -200.0])).is_empty(), "wholly behind");
+    }
+
+    #[test]
+    fn axis_drag_follows_the_arrow_and_ignores_drag_across_it() {
+        let (ax, ay) = axis_drag([0.0, 0.0, 60.0], [24.0, -24.0]);
+        let at = |d: [f64; 2]| [0, 1, 2].map(|i| ax[i] * d[0] + ay[i] * d[1]);
+        assert_eq!(at([24.0, -24.0]), [0.0, 0.0, 60.0]);
+        assert_eq!(at([-12.0, 12.0]), [0.0, 0.0, -30.0]);
+        assert_eq!(at([10.0, 10.0]), [0.0, 0.0, 0.0]);
     }
 
     #[test]

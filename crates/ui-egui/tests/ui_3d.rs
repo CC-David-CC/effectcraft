@@ -265,3 +265,57 @@ fn each_layout_pane_chooses_its_own_view() {
     settle(&mut h);
     assert!(present(&h, "activeCamera") && !has_camera(&h, "activeCamera"));
 }
+
+fn drag(h: &mut Harness<'_, EffectcraftApp>, from: egui::Pos2, to: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(from));
+    h.step();
+    h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    for k in 1..=8 {
+        h.event(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 8.0)));
+        h.step();
+    }
+    h.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+}
+
+/// #1618: the gizmo's arrows drag a 3D layer along one axis. Z, which points at the default
+/// camera, still has a grabbable arrow and pushes the layer in depth, as one undo step.
+#[test]
+fn gizmo_arrows_move_a_3d_layer_along_one_axis() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "C", "width": 640, "height": 360, "duration": 2})).unwrap();
+    let solid = s.execute("layer.newSolid", json!({"color": "#ff0000", "width": 200, "height": 200})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("layer.setSwitch", json!({"layer": solid, "switch": "threeD", "value": true})).unwrap();
+    s.execute("layer.select", json!({"layers": [solid]})).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
+    settle(&mut h);
+    let pos = |h: &mut Harness<'_, EffectcraftApp>| -> Vec<f64> {
+        let v = h.state_mut().session.execute("prop.get", json!({"layer": solid, "path": "transform/position"})).unwrap()["value"].clone();
+        serde_json::from_value(v).unwrap()
+    };
+    let tip = |h: &Harness<'_, EffectcraftApp>, axis: &str| {
+        let id = format!("viewer.gizmo.{solid}.{axis}");
+        let [x, y, w, hh] = h.state().auto.find(&id).unwrap_or_else(|| panic!("{id} is registered")).rect;
+        egui::pos2(x + w / 2.0, y + hh / 2.0)
+    };
+    let p0 = pos(&mut h);
+
+    let z = tip(&h, "z");
+    drag(&mut h, z, z + egui::vec2(30.0, -30.0));
+    let p1 = pos(&mut h);
+    assert_eq!(&p1[..2], &p0[..2], "x and y stay put");
+    assert!(p1[2] > p0[2] + 10.0, "pushed back in depth: {p0:?} -> {p1:?}");
+
+    settle(&mut h);
+    let x = tip(&h, "x");
+    drag(&mut h, x, x + egui::vec2(40.0, 25.0));
+    let p2 = pos(&mut h);
+    assert!(p2[0] > p1[0] + 10.0, "moved along x: {p1:?} -> {p2:?}");
+    assert_eq!(&p2[1..], &p1[1..], "only x changes");
+
+    h.state_mut().session.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(pos(&mut h), p1, "the x drag is one undo step");
+    h.state_mut().session.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(pos(&mut h), p0, "the z drag is one undo step");
+}

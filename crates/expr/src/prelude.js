@@ -262,7 +262,8 @@ function timeToFrames(t, fps, isDuration) {
   if (t === undefined) t = time + thisComp.displayStartTime;
   if (fps === undefined) fps = 1 / __S.fd;
   var frames = t * fps;
-  if (isDuration && frames !== 0) return frames < 0 ? Math.floor(frames) : Math.ceil(frames);
+  // The 1e-6 keeps a whole number of frames that floating point overshoots (31/24 - 5/24) whole.
+  if (isDuration && frames !== 0) return frames < 0 ? Math.floor(frames + 1e-6) : Math.ceil(frames - 1e-6);
   return Math.floor(frames + 1e-6);
 }
 

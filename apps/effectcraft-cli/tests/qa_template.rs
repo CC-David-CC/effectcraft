@@ -654,7 +654,7 @@ fn template_missing_output_does_not_replace_extracted_media() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn template_frame_output_cannot_alias_its_template_through_a_hard_link() {
     use std::os::unix::fs::MetadataExt;
@@ -672,7 +672,7 @@ fn template_frame_output_cannot_alias_its_template_through_a_hard_link() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn template_frame_output_cannot_alias_its_values_through_a_hard_link() {
     use std::os::unix::fs::MetadataExt;

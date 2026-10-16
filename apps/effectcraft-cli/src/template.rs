@@ -40,7 +40,7 @@ pub(super) fn validate(cmd: &str, args: &Args) -> Result<(), Failure> {
                     if path == output {
                         return true;
                     }
-                    #[cfg(target_os = "linux")]
+                    #[cfg(unix)]
                     {
                         use std::os::unix::fs::MetadataExt;
                         // Distinct canonical paths can still name the same file through hard links.

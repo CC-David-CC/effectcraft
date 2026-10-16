@@ -564,14 +564,17 @@ mod tests {
 
     /// The languages that have no rows yet, with the table a translator fills in for each. A new
     /// language is added here and to [`catalog`]; the test then guards its rows as they arrive.
-    const PENDING: &[(&str, &[Row])] = &[("zh-hant", TRADITIONAL_CHINESE), ("ja", JAPANESE_EFFECTS)];
+    const PENDING: &[(&str, &[Row])] = &[("zh-hant", TRADITIONAL_CHINESE)];
+
+    /// The languages whose tables are being filled in: guarded like [`PENDING`] row by row.
+    const PARTIAL: &[(&str, &[Row])] = &[("ja", JAPANESE_EFFECTS)];
 
     /// A pending language may lag Simplified Chinese but may not invent ids or disagree about
     /// which effect an id names: a translator fills these tables row by row. While they are
     /// empty the test is a no-op, which is why the slot ships before the data does.
     #[test]
     fn a_pending_language_only_uses_known_ids() {
-        for (language, rows) in PENDING {
+        for (language, rows) in PENDING.iter().chain(PARTIAL) {
             let mut ids: Vec<&str> = vec![];
             for (id, english, translated) in *rows {
                 let Some((_, hans_english, _)) = SIMPLIFIED_CHINESE.iter().find(|(hans_id, _, _)| hans_id == id) else {
@@ -649,6 +652,9 @@ mod tests {
         assert_eq!(category("Blur & Sharpen"), "模糊和锐化");
         assert_eq!(name("ec.unknown.effect", "Mystery"), "Mystery");
         assert_eq!(category("Not A Category"), "Not A Category");
+        set_current("ja");
+        assert_eq!(name("ec.blur.gaussian", "Gaussian Blur"), "ブラー（ガウス）");
+        assert_eq!(name("ec.unknown.effect", "Mystery"), "Mystery", "a row a partial table lacks draws the registry name");
         set_current("en");
     }
 

@@ -969,6 +969,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-docpath"
+version = "0.1.0"
+
+[[package]]
 name = "craft-pdf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d"
@@ -1245,6 +1249,7 @@ dependencies = [
 name = "effectcraft-engine"
 version = "0.10.0"
 dependencies = [
+ "craft-docpath",
  "effectcraft-color",
  "effectcraft-effects",
  "effectcraft-geom",
@@ -1418,6 +1423,7 @@ dependencies = [
 name = "effectcraft-lottie"
 version = "0.10.0"
 dependencies = [
+ "craft-docpath",
  "effectcraft-color",
  "effectcraft-effects",
  "effectcraft-keyframe",
@@ -1435,6 +1441,7 @@ dependencies = [
 name = "effectcraft-media"
 version = "0.10.0"
 dependencies = [
+ "craft-docpath",
  "effectcraft-model",
  "effectcraft-pdf",
  "effectcraft-project",

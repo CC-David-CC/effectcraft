@@ -828,7 +828,9 @@ pub(crate) fn openable_original(path: &str) -> std::result::Result<(), String> {
 }
 
 fn edit_original(s: &mut Session, _: &Value) -> Result<Value> {
-    let path = original_path(s).ok_or_else(|| super::bad("edit.editOriginal", "select a footage item or layer"))?;
+    let stored = original_path(s).ok_or_else(|| super::bad("edit.editOriginal", "select a footage item or layer"))?;
+    let path = s.stored_path(&stored).map_err(|why| super::bad("edit.editOriginal", crate::doc_path::refusal(&stored, why)))?;
+    let path = path.to_string_lossy();
     openable_original(&path).map_err(|e| super::bad("edit.editOriginal", e))?;
     let url = super::layer_menu::file_url(&path);
     s.events.push(crate::Event::OpenUrl(url.clone()));

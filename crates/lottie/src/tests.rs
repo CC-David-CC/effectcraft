@@ -363,10 +363,7 @@ fn offset_paths_miter_uses_animatable_lottie_value() {
     let (mut p, cid) = setup();
     let l = shape_layer(&mut p, cid, |ids| {
         let mut animated = build::shape_simple_op(ids, "offset").unwrap();
-        animated.get_mut("miter").unwrap().keys = vec![
-            Keyframe::new(s(0.0), Value::Scalar(5.0)),
-            Keyframe::new(s(1.0), Value::Scalar(9.0)),
-        ];
+        animated.get_mut("miter").unwrap().keys = vec![Keyframe::new(s(0.0), Value::Scalar(5.0)), Keyframe::new(s(1.0), Value::Scalar(9.0))];
         let mut constant = build::shape_simple_op(ids, "offset").unwrap();
         constant.get_mut("miter").unwrap().value = Value::Scalar(6.0);
         let mut stroke = build::shape_stroke(ids, [1.0, 1.0, 1.0, 1.0], 2.0);
@@ -396,10 +393,17 @@ fn offset_paths_miter_uses_animatable_lottie_value() {
     let bytes = serde_json::to_vec(&old).unwrap();
     let imported = import(&mut legacy, &bytes, "Legacy", "", &mut |_| None).unwrap();
     let constant = &legacy.comp(imported.comp).unwrap().layers[0].props;
-    let second = constant.sub("contents").unwrap().children.iter().filter_map(|n| match n {
-        Node::Group(g) if g.match_id == "offset" => Some(g),
-        _ => None,
-    }).nth(1).unwrap();
+    let second = constant
+        .sub("contents")
+        .unwrap()
+        .children
+        .iter()
+        .filter_map(|n| match n {
+            Node::Group(g) if g.match_id == "offset" => Some(g),
+            _ => None,
+        })
+        .nth(1)
+        .unwrap();
     assert_eq!(second.get("miter").unwrap().value, Value::Scalar(6.0));
 }
 

@@ -3935,6 +3935,7 @@ pub(crate) fn layer_menu(ui: &mut egui::Ui, layers: &[u64], caps: LayerMenuCaps,
             }
         })
     });
+    ui.menu_button(crate::i18n::tr("Layer Styles"), |ui| layer_styles_submenu(ui, layers, &mut item));
     ui.menu_button(crate::i18n::tr("Effects"), |ui| effects_submenu(ui, layers, &mut item));
     ui.menu_button(crate::i18n::tr("Arrange"), |ui| {
         item(ui, "Bring Layer to Front", "layer.arrange", json!({"layers": layers, "to": "front"}));
@@ -3947,6 +3948,31 @@ pub(crate) fn layer_menu(ui: &mut egui::Ui, layers: &[u64], caps: LayerMenuCaps,
     item(ui, "Duplicate", "edit.duplicate", json!({"layers": layers}));
     item(ui, "Split Layer", "edit.splitLayer", json!({"layers": layers}));
     item(ui, "Delete", "edit.clear", json!({"layers": layers}));
+}
+
+/// The layer context menu's Layer Styles submenu, matching the Layer ▸ Layer Styles application menu.
+fn layer_styles_submenu(ui: &mut egui::Ui, layers: &[u64], item: &mut dyn FnMut(&mut egui::Ui, &str, &str, serde_json::Value)) {
+    item(ui, "Layer Style Options...", "layer.style.options", json!({}));
+    ui.separator();
+    item(ui, "Convert to Editable Styles", "layer.style.convertToEditable", json!({"layers": layers}));
+    item(ui, "Show All", "layer.style.showAll", json!({"layers": layers}));
+    item(ui, "Remove All", "layer.style.removeAll", json!({"layers": layers}));
+    ui.separator();
+    for (id, label) in effectcraft_engine::project::styles::STYLES {
+        let cmd = match *id {
+            "dropShadow" => "layer.style.dropShadow",
+            "innerShadow" => "layer.style.innerShadow",
+            "outerGlow" => "layer.style.outerGlow",
+            "innerGlow" => "layer.style.innerGlow",
+            "bevelEmboss" => "layer.style.bevelEmboss",
+            "satin" => "layer.style.satin",
+            "colorOverlay" => "layer.style.colorOverlay",
+            "gradientOverlay" => "layer.style.gradientOverlay",
+            "stroke" => "layer.style.stroke",
+            _ => continue,
+        };
+        item(ui, label, cmd, json!({}));
+    }
 }
 
 /// The layer context menu's Effects submenu: every effect from the registry grouped by category,

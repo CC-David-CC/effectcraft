@@ -85,7 +85,7 @@ pub(crate) fn inline_len(file: &File, d: &Dict, res: Option<&Dict>) -> Option<us
     // `Width`/`Height` come straight from the file and can be enormous: fall back to the
     // `EI` scan (the caller's `None` branch) instead of overflowing the arithmetic.
     let row = w.checked_mul(n)?.checked_mul(bpc)?.div_ceil(8);
-    Some(row.checked_mul(h)?)
+    row.checked_mul(h)
 }
 
 /// Decode an image's samples (all filters, including DCT). Returns (bytes, components from

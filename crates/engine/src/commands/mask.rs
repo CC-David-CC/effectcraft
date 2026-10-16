@@ -290,6 +290,7 @@ fn edit_vertices_counted(s: &mut Session, p: &Value, label: &str, removes: bool,
             let roto = super::paths::is_roto(g);
             let Some(pr) = g.get_mut("path") else { continue };
             let KV::Path(mut sp) = pr.value_at(lt) else { continue };
+            sp.fit_tangents();
             f(&mut sp, idx);
             if roto {
                 super::paths::roto_smooth(&mut sp);

@@ -374,6 +374,17 @@ fn vertex_commands_fill_in_missing_tangents_of_a_loaded_path() {
 }
 
 #[test]
+fn deleting_vertices_of_a_loaded_path_with_short_tangents_does_not_panic() {
+    let (mut s, l) = setup();
+    let m = s.execute("mask.new", json!({"layer": l, "vertices": [[10, 10], [90, 10], [90, 90]]})).unwrap()["mask"].as_u64().unwrap();
+    reopen_with_short_tangents(&mut s);
+    s.execute("mask.selectVertices", json!({"vertices": [{"layer": l, "mask": m, "index": 2}]})).unwrap();
+    s.execute("mask.deleteVertices", json!({})).unwrap();
+    let p = prop(&s, l, "masks/#1/path").value.as_path().unwrap().clone();
+    assert_eq!((p.vertices.len(), p.in_tangents.len(), p.out_tangents.len()), (2, 2, 2));
+}
+
+#[test]
 fn vertex_commands_fill_in_missing_tangents_of_a_loaded_animated_path() {
     let (mut s, l) = setup();
     let m = s.execute("mask.new", json!({"layer": l, "vertices": [[10, 10], [90, 10], [90, 90]]})).unwrap()["mask"].as_u64().unwrap();

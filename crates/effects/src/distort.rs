@@ -568,7 +568,8 @@ mod tests {
                 let (a, b) = (o.img.get(x + pad, edge_row + pad), im.get(x, edge_row));
                 assert!((0..4).all(|i| (a[i] - b[i]).abs() < 0.01), "pin {edge_row} col {x}: {a:?} vs {b:?}");
             }
-            assert!(o.img.data.iter().zip(im.data.iter()).any(|(a, b)| differs(*a, *b)), "pin {edge_row}: layer must still distort");
+            let mid = 15;
+            assert!((0..40).any(|x| differs(o.img.get(x + pad, mid + pad), im.get(x, mid))), "pin {edge_row}: the middle of the layer must still distort");
         }
     }
 

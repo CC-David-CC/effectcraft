@@ -1357,10 +1357,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 } else if vertex_at(hp, true).or_else(|| vertex_at(hp, false)).is_some() {
                     // A path point under a box handle is grabbed first: no resize cursor.
                     egui::CursorIcon::PointingHand
-                } else if let Some((.., cursor)) = handle_hits.iter().find(|(_, _, h, _)| h.distance(hp) < HANDLE) {
-                    *cursor
                 } else if axis_at(&axis_hits, hp).is_some() {
                     egui::CursorIcon::Move
+                } else if let Some((.., cursor)) = handle_hits.iter().find(|(_, _, h, _)| h.distance(hp) < HANDLE) {
+                    *cursor
                 } else {
                     egui::CursorIcon::Default
                 }
@@ -1544,7 +1544,12 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             // far enough to count as a drag it may have left a small handle.
             Tool::Selection => {
                 let cpt = map.to_comp(press);
-                if let Some((lid, hi, ..)) = handle_hits.iter().find(|(_, _, h, _)| h.distance(press) < HANDLE + 2.0).cloned() {
+                // A gizmo arrow is drawn over the box handles, so it is grabbed first: move along
+                // that axis only, without snapping.
+                if let Some((lid, _, ax, ay)) = axis_at(&axis_hits, press) {
+                    let p0 = comp.layer(lid).and_then(|l| Some(ectx.v3(l, l.transform()?, "position", [0.0; 3])));
+                    p0.map(|p0| Gesture::Move { layers: vec![(lid, p0, ax, ay)], start: cpt, snap_src: None })
+                } else if let Some((lid, hi, ..)) = handle_hits.iter().find(|(_, _, h, _)| h.distance(press) < HANDLE + 2.0).cloned() {
                     let layer = comp.layer(lid).cloned();
                     layer.and_then(|layer| {
                         let tr = layer.transform()?;
@@ -1568,10 +1573,6 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                                 .collect(),
                         })
                     })
-                } else if let Some((lid, _, ax, ay)) = axis_at(&axis_hits, press) {
-                    // A gizmo arrow: move along that axis only, without snapping.
-                    let p0 = comp.layer(lid).and_then(|l| Some(ectx.v3(l, l.transform()?, "position", [0.0; 3])));
-                    p0.map(|p0| Gesture::Move { layers: vec![(lid, p0, ax, ay)], start: cpt, snap_src: None })
                 } else if let Some(l) = pick(app, &ectx, cpt, mods.shift) {
                     let layers: Vec<(LayerId, [f64; 3], [f64; 3], [f64; 3])> = app
                         .session

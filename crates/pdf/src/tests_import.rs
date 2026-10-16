@@ -264,6 +264,22 @@ fn hostile_structures_return_errors_or_draw_nothing() {
 }
 
 #[test]
+fn inline_image_with_absurd_dimensions_falls_back_to_ei_scan() {
+    // `/W 5000000000000000000` overflows the row math (`* bpc` alone exceeds usize::MAX):
+    // `inline_len` must return `None` (scan for `EI`) instead of overflowing; the oversized
+    // image itself is then refused by size.
+    let bytes = page_pdf("q 10 0 0 10 0 0 cm BI /W 5000000000000000000 /H 100 /CS /G /BPC 8 ID \0 EI Q", "", vec![]);
+    let doc = parse(&bytes).unwrap();
+    let _ = render(&doc);
+    assert!(!doc.skipped.is_empty());
+    // A length just under `usize::MAX` passes the row math; past byte 4096 of the content the
+    // caller's `start + len` would then overflow.
+    let content = format!("{}q 10 0 0 10 0 0 cm BI /W 2305843009213693440 /H 8 /CS /G /BPC 8 ID \0 EI Q", " ".repeat(5000));
+    let doc = parse(&page_pdf(&content, "", vec![])).unwrap();
+    let _ = render(&doc);
+}
+
+#[test]
 fn smask_with_absurd_bpc_is_ignored_not_fatal() {
     // `/BitsPerComponent 32` in a soft mask: `1u32 << bpc` must neither panic (debug)
     // nor mistranslate samples into alpha (release); the mask is treated as absent.
@@ -276,11 +292,7 @@ fn smask_with_absurd_bpc_is_ignored_not_fatal() {
                 "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /SMask 11 0 R >>".into(),
                 Some(vec![0x80; 4]),
             ),
-            (
-                11,
-                "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 32 >>".into(),
-                Some(vec![0xFF; 16]),
-            ),
+            (11, "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 32 >>".into(), Some(vec![0xFF; 16])),
         ],
     );
     let doc = parse(&bytes).unwrap();
@@ -400,6 +412,12 @@ fn postscript_radix_numbers_outside_2_to_36_are_not_numbers() {
         let src = format!("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\n{n} pop 0 0 moveto 10 10 lineto stroke\n");
         let _ = parse(src.as_bytes());
     }
+}
+
+#[test]
+fn extreme_page_indices_have_a_printable_error() {
+    let text = Error::PageOutOfRange(usize::MAX).to_string();
+    assert!(text.starts_with("the PDF has no page "));
 }
 
 #[test]

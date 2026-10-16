@@ -1895,6 +1895,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if let Some(i) = rows.iter().position(|r| matches!(r.kind, RowKind::Layer) && Some(r.layer) == top) {
             app.ui.timeline.scroll_y = rows.iter().take(i).map(|r| row_height(r, rh)).sum();
         }
+    } else if let Some(crate::state::ScrollTo::Property(uid)) = scroll_to
+        && let Some(i) = rows.iter().position(|r| matches!(r.kind, RowKind::Prop { uid: p } if p == uid))
+    {
+        app.ui.timeline.scroll_y = rows.iter().take(i).map(|r| row_height(r, rh)).sum();
     }
     if ui.rect_contains_pointer(rows_rect) {
         let (dy, dx, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.smooth_scroll_delta.x, i.modifiers.alt));
@@ -1992,8 +1996,11 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 gp.line_segment([pos2(graph_x0, r.max.y - 0.5), pos2(r.max.x, r.max.y - 0.5)], Stroke::new(1.0, t.app_bg));
                 // A/V features.
                 let sw = &layer.switches;
+                // Every layer has the Video switch (the eye), nulls, cameras and lights included,
+                // as in After Effects: it hides a null's outline in the viewer and turns a camera or
+                // light off.
                 let av_items: [(Icon, bool, &str, bool); 4] = [
-                    (Icon::Eye, sw.video, "video", layer.source.is_av()),
+                    (Icon::Eye, sw.video, "video", true),
                     (Icon::Speaker, sw.audio, "audio", layer.props.sub("audio").is_some()),
                     (Icon::Solo, sw.solo, "solo", layer.source.is_av()),
                     (Icon::Lock, sw.locked, "lock", true),
@@ -2400,6 +2407,16 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     },
                 );
                 gp.rect_filled(Rect::from_min_max(pos2(graph_x0, r.min.y), r.max), 0.0, t.tl_bg);
+                // An effect's colour label (26.5): the same bar the Effect Controls header wears,
+                // on the row's left edge.
+                if let Some(lab) =
+                    group.filter(|g| matches!(g.kind, GroupKind::Effect { .. })).and_then(|g| g.label).filter(|l| *l != effectcraft_engine::color::Label::None)
+                {
+                    let [lr, lg, lb] = app.session.prefs.label_rgb(lab);
+                    let bar = Rect::from_min_size(left.min, vec2(4.0, left.height()));
+                    lp.rect_filled(bar, 0.0, Color32::from_rgb(lr, lg, lb));
+                    app.auto.add(&format!("timeline.group.{uid}.label"), bar, &app.session.prefs.label_name(lab));
+                }
                 let indent = cw.name + 6.0 + 14.0 * row.depth as f32;
                 if *has_children {
                     let tw = Rect::from_center_size(pos2(indent, cy), vec2(13.0, 13.0));
@@ -3330,8 +3347,18 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     {
         let released = ctx.input(|i| i.pointer.any_released());
         if let crate::panels::DragPayload::Effect(e) = payload.as_ref() {
-            p.rect_stroke(rows_rect, 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
             let target = hit_rows.iter().find(|(r, _)| ptr.y >= r.min.y && ptr.y < r.max.y).map(|(_, row)| row.layer);
+            // The layer the effect would land on (its row and its open properties) is the one
+            // that lights up, not the whole timeline.
+            if let Some(l) = target
+                && let Some(span) = hit_rows.iter().filter(|(_, row)| row.layer == l).map(|(r, _)| *r).reduce(|a, b| a.union(b))
+            {
+                let lit = span.intersect(rows_rect);
+                let rp = p.with_clip_rect(rows_rect);
+                rp.rect_filled(lit, 0.0, t.accent.gamma_multiply(0.18));
+                rp.rect_stroke(lit, 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+                app.auto.add("timeline.dropTarget", lit, "Drop target layer");
+            }
             if released && let Some(l) = target {
                 actions.push(("effect.apply".into(), json!({"effect": e, "layers": [l.0]})));
             }

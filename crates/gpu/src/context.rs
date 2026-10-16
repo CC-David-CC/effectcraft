@@ -917,14 +917,14 @@ impl GpuContext {
         Some(g)
     }
 
-    /// Upload a (layer cache) buffer, reusing the texture while the same `Arc` is alive: static
-    /// layers upload once, not every frame.
     /// Entries in the layer upload cache.
     #[cfg(test)]
     pub(crate) fn upload_entries(&self) -> usize {
         self.uploads.lock().map(|u| u.map.len()).unwrap_or_default()
     }
 
+    /// Upload a (layer cache) buffer, reusing the texture while the same `Arc` is alive: static
+    /// layers upload once, not every frame.
     pub(crate) fn upload_buf(&self, buf: &Arc<Buf>) -> Option<GpuImage> {
         let key = Arc::as_ptr(buf) as usize;
         if let Ok(mut u) = self.uploads.lock() {

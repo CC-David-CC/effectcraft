@@ -80,4 +80,5 @@ real_name = "Moein Saharkhiz"
 display_name = "onlymoein"
 
 [people.arnav-hiwarkar]
-sync_github_name = true
+display_name = "arnav-hiwarkar"
+sync_github_name = false

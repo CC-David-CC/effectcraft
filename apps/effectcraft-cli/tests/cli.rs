@@ -540,7 +540,6 @@ solid.property("ADBE Transform Group").property("ADBE Opacity").addToMotionGraph
     let (code, reply) =
         run_json(&["render", "--empty", "--format", "gif", "--start", "0", "--end", "0.1", "--resolution", "quarter", "--out", output.to_str().unwrap()]);
     let output_exists = output.exists();
-    eprintln!("EMPTY_RENDER_OBSERVATION status={code} output_exists={output_exists} reply={reply}");
     assert!(!output_exists, "--empty must not render the demo into the requested output");
     assert_eq!(code, 1, "{reply}");
     assert_eq!(reply["error"], "command `renderQueue.add` is not available right now: select or open a composition", "{reply}");

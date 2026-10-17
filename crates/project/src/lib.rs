@@ -49,8 +49,9 @@ pub fn saved_by(text: &str) -> Option<String> {
     serde_json::from_str::<Meta>(text).ok()?.saved_by
 }
 
-/// The compositions that were open when a project file was saved (`activeComp` and `openComps`
-/// next to `savedBy`), so it reopens where it was left (#748). Editor state rather than project
+/// The compositions that were open when a project file was saved and their current times
+/// (`activeComp`, `openComps` and `compTimes` next to `savedBy`), so it reopens where it was left
+/// (#748, #1714). Editor state rather than project
 /// content: opening a comp doesn't make the project unsaved, and it isn't part of
 /// [`Project`]. Older files have none; older versions ignore it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]

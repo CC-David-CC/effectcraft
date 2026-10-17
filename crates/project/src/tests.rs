@@ -180,7 +180,13 @@ fn project_files_remember_the_open_comps() {
     // Files from before #748 have no view; a garbled one is ignored, not an error.
     assert_eq!(crate::saved_view(&p.to_file_json().unwrap()), crate::SavedView::default());
     let odd = text.replacen(&format!("\"activeComp\": {}", cid.0), "\"activeComp\": \"Main\"", 1);
-    assert_eq!(crate::saved_view(&odd), crate::SavedView { active_comp: None, ..view });
+    assert_eq!(crate::saved_view(&odd), crate::SavedView { active_comp: None, ..view.clone() });
+    // Entries that aren't an id and a whole tick count are skipped; the rest are kept.
+    let times = text.replacen("\"compTimes\": {", "\"compTimes\": {\"x\": 1, \"7\": \"a\", \"8\": 1.5, \"9\": -4,", 1);
+    let expect = [(cid, effectcraft_time::Tick(4_237_833_600)), (crate::ItemId(9), effectcraft_time::Tick(-4))].into();
+    assert_eq!(crate::saved_view(&times).comp_times, expect);
+    let not_a_map = text.replacen("\"compTimes\": {", "\"compTimes\": [], \"unused\": {", 1);
+    assert_eq!(crate::saved_view(&not_a_map), crate::SavedView { comp_times: Default::default(), ..view });
 }
 
 /// The Project panel's "used N times": layers in every comp that use the item directly, a precomp

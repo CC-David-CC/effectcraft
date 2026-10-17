@@ -173,14 +173,14 @@ fn project_files_name_their_version_and_always_read_back() {
 #[test]
 fn project_files_remember_the_open_comps() {
     let (p, cid) = project_with_layer();
-    let view = crate::SavedView { active_comp: Some(cid), open_comps: vec![cid] };
+    let view = crate::SavedView { active_comp: Some(cid), open_comps: vec![cid], comp_times: [(cid, effectcraft_time::Tick(4_237_833_600))].into() };
     let text = p.to_file_json_with_view(&view).unwrap();
     assert_eq!(crate::saved_view(&text), view);
     assert_eq!(Project::from_json(&text).unwrap(), p, "the view is not part of the project");
     // Files from before #748 have no view; a garbled one is ignored, not an error.
     assert_eq!(crate::saved_view(&p.to_file_json().unwrap()), crate::SavedView::default());
     let odd = text.replacen(&format!("\"activeComp\": {}", cid.0), "\"activeComp\": \"Main\"", 1);
-    assert_eq!(crate::saved_view(&odd), crate::SavedView { active_comp: None, open_comps: vec![cid] });
+    assert_eq!(crate::saved_view(&odd), crate::SavedView { active_comp: None, ..view });
 }
 
 /// The Project panel's "used N times": layers in every comp that use the item directly, a precomp

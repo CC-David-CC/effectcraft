@@ -99,6 +99,7 @@ fn isolate(project: &Project, cid: ItemId, lid: LayerId) -> Option<Project> {
 
 /// What a pre-render needs from the session, so it can run on a background thread.
 struct PrerenderCx {
+    protected: crate::output_guard::Protected,
     exporter: Option<Arc<dyn Exporter>>,
     footage: Arc<dyn effectcraft_render::FootageSource>,
     expr: Option<Arc<dyn effectcraft_render::ExprHost>>,
@@ -157,6 +158,7 @@ fn export_timeline(s: &mut Session, p: &Value) -> Result<Value> {
         }
         path = format!("{path}.{}", format.extension());
     }
+    s.refuse_export(&path)?;
     let cid = comp_id(s, p)?;
     let prerender_mode = match str_p(p, "prerender") {
         None => match p.get("prerender").and_then(Value::as_bool) {
@@ -178,6 +180,7 @@ fn export_timeline(s: &mut Session, p: &Value) -> Result<Value> {
     let project = s.project.clone();
     let services = s.services.clone();
     let cx = PrerenderCx {
+        protected: crate::output_guard::Protected::of(s),
         exporter: s.exporter.clone(),
         footage: s.footage.clone(),
         expr: s.expr.clone(),
@@ -189,6 +192,9 @@ fn export_timeline(s: &mut Session, p: &Value) -> Result<Value> {
     let wait = !b_p(p, "background").unwrap_or(false);
     s.spawn_task("exportTimeline", format!("Export {}", format.label()), wait, move |ctl| {
         let (bytes, mut result) = export_timeline_work(&cx, &project, cid, &opts, &dir, &stem, ctl)?;
+        if let Some(source) = cx.protected.find(std::path::Path::new(&path)) {
+            return Err(source.refusal(&path, crate::output_guard::Use::Export));
+        }
         services.write_file(&path, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
         result["path"] = json!(path);
         result["toast"] = json!(match format {
@@ -220,6 +226,11 @@ fn export_timeline_work(
         let layer_name = project.comp(c).and_then(|cc| cc.layer(l)).map(|x| x.name.clone()).unwrap_or_default();
         ctl.message(format!("Pre-render {layer_name}"));
         let file = dir.join(format!("{stem}_{}_{}_{}.mov", safe(&comp_name), safe(&layer_name), l.0)).to_string_lossy().to_string();
+        // The movies are outputs too: never over footage, a proxy or the project file.
+        if let Some(source) = cx.protected.find(std::path::Path::new(&file)) {
+            errors.push(format!("{comp_name} ▸ {layer_name}: {}", source.refusal(&file, crate::output_guard::Use::Export)));
+            continue;
+        }
         // Progress over all the layers, each one's frames a share of it.
         let mut progress = |done: u64, total: u64| ctl.progress(i * 1000 + done.saturating_mul(1000) / total.max(1), n * 1000);
         match prerender(cx, project, c, l, &file, &mut progress) {

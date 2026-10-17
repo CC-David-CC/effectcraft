@@ -319,6 +319,18 @@ build real projects through these interfaces; they are worked examples of everyt
   proresProfile: 4444, output}` then `renderQueue.render {"wait": true}`. Check a render by
   importing it (`file.import`, `file.newCompFromSelection`) and `render_frame {transparent: true}`
   for its alpha (ProRes 4444 and WebM VP9 alpha both read back as straight alpha).
+* **Other files written to a path you give** follow the same footage rule, with no flag and no
+  prompt: `comp.saveFrameAs` (also `…Psd`, `…Exr`), `file.exportLottie`, `file.saveCopy`,
+  `file.saveCopyAsXml`, `file.collectFiles` (every copy and the collected project; nothing is
+  written if one would land on a file the project reads), `file.exportTimeline` (and the movies it
+  pre-renders), `essential.exportTemplate`, `anim.savePreset`, `view.exportGuides`,
+  `shortcuts.export`, the control channel's `render.frame` / `ui.screenshot` with a `path`, the
+  MCP `render_frame` tool and `effectcraft-cli render-frame --out`. Footage (every frame of a
+  sequence), a proxy and the project file are refused with the reason and left untouched.
+  `file.checkOutput {path}` says beforehand (`{blocked, source, reason}`). Not covered: Save /
+  Save As / Increment and Save / auto-save (they write the project's own file), script `File`
+  writes (a script may rewrite a data file it also imports), and files the app extracts for
+  itself (template media, vector images).
 * **Essential Graphics**: controls can be addressed by name (`essential.set {"layer":"#1",
   "control":"Title","value":"John Smith"}`); a command that targets an explicit `comp` runs even
   when the active comp would disable it (`essential.exportTemplate {"comp":"Lower Third", …}`).

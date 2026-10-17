@@ -619,6 +619,12 @@ fn playback(app: &mut EffectcraftApp, p: &Value, now: f64) -> Outcome {
 /// when the capture is issued.
 fn screenshot(app: &mut EffectcraftApp, ctx: &egui::Context, p: &Value) -> Outcome {
     let s = |k: &str| p.get(k).and_then(Value::as_str);
+    // A file the project reads is never the output.
+    if let Some(path) = s("path")
+        && let Err(e) = app.session.refuse_export(path)
+    {
+        return err(e);
+    }
     // The panel/element is an identity, not a rectangle: it is resolved when the capture
     // is issued (after the UI settles), so a panel that moves meanwhile is not cropped
     // with its old rectangle.
@@ -672,6 +678,12 @@ fn quit(app: &mut EffectcraftApp, ctx: &egui::Context, p: &Value) -> Outcome {
 /// temp file) or inline as base64 when `base64: true`.
 fn render_frame(app: &EffectcraftApp, p: &Value) -> Outcome {
     let s = &app.session;
+    // A file the project reads is never the output (checked before rendering).
+    if let Some(path) = p.get("path").and_then(Value::as_str)
+        && let Err(e) = s.refuse_export(path)
+    {
+        return err(e);
+    }
     let cid = match s.resolve_comp(p.get("comp")) {
         Ok(c) => c,
         Err(e) => return err(e),

@@ -333,7 +333,8 @@ fn paste_properties(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let lt = l.layer_time(t);
             for (path, v) in &values {
-                if let Some(pr) = l.props.prop_mut(path)
+                let path = super::resolve_effect_path(l, path);
+                if let Some(pr) = l.props.prop_mut(&path)
                     && let Some(v) = pr.value.coerce_json(&v.to_json())
                 {
                     pr.set_value_at(lt, v);
@@ -463,7 +464,8 @@ fn paste_links(s: &mut Session, clip: LinkClip) -> Result<Value> {
         for lid in &ids {
             let l = super::layer_mut(proj, cid, *lid)?;
             for (path, e) in &pairs {
-                if let Some(pr) = l.props.prop_mut(path) {
+                let path = super::resolve_effect_path(l, path);
+                if let Some(pr) = l.props.prop_mut(&path) {
                     pr.expr = Some(e.clone());
                     n += 1;
                 }

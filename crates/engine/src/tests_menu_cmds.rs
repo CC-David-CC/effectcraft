@@ -1556,6 +1556,25 @@ fn pasted_path_operator_goes_below_the_shapes_it_acts_on() {
     assert_eq!(contents_names(&s, b), ["Polystar 1", "Trim Paths 1"]);
 }
 
+/// Pasting Merge Paths onto a painted layer with nothing selected keeps the paint: the renderer
+/// drops the draws above a Merge Paths, so it goes between the path and the paints (#1681).
+#[test]
+fn pasted_merge_paths_keeps_the_targets_paint() {
+    let mut s = comp();
+    let a = s.execute("layer.newShape", json!({"kind": "none", "name": "A"})).unwrap()["layer"].as_u64().unwrap();
+    let merge = s.execute("layer.addShapeItem", json!({"layer": a, "kind": "merge"})).unwrap()["uid"].as_u64().unwrap();
+    let b = s.execute("layer.newShape", json!({"kind": "none", "name": "B"})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("layer.addShapeItem", json!({"layer": b, "kind": "rect"})).unwrap();
+    s.execute("layer.addShapeItem", json!({"layer": b, "kind": "fill"})).unwrap();
+    let before = opaque_centroid(&s).2;
+    s.execute("prop.select", json!({"layer": a, "prop": merge})).unwrap();
+    s.execute("edit.copy", json!({})).unwrap();
+    s.execute("layer.select", json!({"layers": [b]})).unwrap();
+    s.execute("edit.paste", json!({})).unwrap();
+    assert_eq!(contents_names(&s, b), ["Rectangle Path 1", "Merge Paths 1", "Fill 1"]);
+    assert_eq!(opaque_centroid(&s).2, before);
+}
+
 /// Edit ▸ Duplicate with shape items selected duplicates them in their layer, above the
 /// original and named "Rectangle 2", not the layer (#227).
 #[test]

@@ -77,7 +77,7 @@ pub use color_fx::{
 };
 pub use color2::{Curve, auto_correct_settings, color_link_mode, color_link_sample, equalize_tables, luma_clip_points, shadow_highlight_amounts};
 pub use color3::OffsetCurve;
-pub use distort::transform_shutter;
+pub use distort::{transform_grow, transform_matrix_px, transform_shutter};
 pub use distort2::{MAGNIFY_MODES, bezier_grid, parse_mesh};
 pub use distort3::{RESHAPE_POINTS, ReshapeSetup, SmearSetup, cc_smear_pad, reshape_setup, smear_setup, warp_inverse_map};
 pub use distort4::liquify_mesh;
@@ -285,6 +285,27 @@ impl Buf {
     pub fn rebase(&mut self, origin: [f64; 2]) {
         self.offset[0] += origin[0] * self.scale;
         self.offset[1] += origin[1] * self.scale;
+    }
+    /// Grow by transparent pixels: `sides` = left, top, right, bottom. Content keeps its place.
+    pub fn pad_sides(&mut self, sides: [u32; 4]) {
+        let [l, t, r, b] = sides;
+        if l == 0 && t == 0 && r == 0 && b == 0 {
+            return;
+        }
+        let (Some(w), Some(h)) = (self.img.width.checked_add(l).and_then(|v| v.checked_add(r)), self.img.height.checked_add(t).and_then(|v| v.checked_add(b)))
+        else {
+            return;
+        };
+        let mut out = Image::new(w, h);
+        let (sw, ow) = (self.img.width as usize, w as usize);
+        for y in 0..self.img.height as usize {
+            let at = (y + t as usize) * ow + l as usize;
+            let (Some(src), Some(dst)) = (self.img.data.get(y * sw..(y + 1) * sw), out.data.get_mut(at..at + sw)) else { continue };
+            dst.copy_from_slice(src);
+        }
+        self.img = out;
+        self.offset[0] += l as f64;
+        self.offset[1] += t as f64;
     }
     /// Grow by `pad` transparent pixels on every side.
     pub fn pad(&mut self, pad: u32) {

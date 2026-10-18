@@ -2,7 +2,6 @@
 //! radii, parameter conversions), with the pixel loops as compute kernels.
 
 use effectcraft_effects::{Buf, EffectCtx};
-use effectcraft_geom::{Mat3, vec2};
 use effectcraft_raster::Sampling;
 use effectcraft_render::FxStep;
 
@@ -25,6 +24,24 @@ pub(crate) struct GBuf {
 impl GBuf {
     pub fn to_px(&self, p: [f64; 2]) -> (f64, f64) {
         (p[0] * self.scale + self.offset[0], p[1] * self.scale + self.offset[1])
+    }
+
+    /// Buf::pad_sides: grow by transparent pixels (left, top, right, bottom).
+    pub fn pad_sides(&mut self, e: &mut Enc, sides: [u32; 4]) -> Option<()> {
+        let [l, t, r, b] = sides;
+        if l == 0 && t == 0 && r == 0 && b == 0 {
+            return Some(());
+        }
+        let (w, h) = (self.img.width.checked_add(l)?.checked_add(r)?, self.img.height.checked_add(t)?.checked_add(b)?);
+        if !e.g.fits(w, h) {
+            return None;
+        }
+        let out = e.image(w, h);
+        e.copy_into(&self.img, &out, l, t);
+        self.img = out;
+        self.offset[0] += l as f64;
+        self.offset[1] += t as f64;
+        Some(())
     }
 
     /// Buf::pad: grow by `pad` transparent pixels on every side.
@@ -370,16 +387,14 @@ fn transform(e: &mut Enc, ctx: &EffectCtx, mut b: GBuf) -> Option<GBuf> {
     if ctx.env.host.is_some() && effectcraft_effects::transform_shutter(ctx).is_some() {
         return None;
     }
-    let anchor = b.to_px(ctx.params.v2("anchor"));
-    let pos = b.to_px(ctx.params.v2("position"));
-    let sh = ctx.params.f("scaleHeight");
-    let sw = if ctx.params.b("uniform") { sh } else { ctx.params.f("scaleWidth") };
     let opacity = ctx.params.f("opacity") as f32 / 100.0;
-    let m = Mat3::translate(vec2(pos.0, pos.1))
-        * Mat3::rotate_deg(ctx.params.f("rotation"))
-        * Mat3::skew_deg(ctx.params.f("skew"), ctx.params.f("skewAxis"))
-        * Mat3::scale(vec2(sw / 100.0, sh / 100.0))
-        * Mat3::translate(vec2(-anchor.0, -anchor.1));
+    // As distort::transform: After Effects' matrix, drawn outside the layer's bounds.
+    if !ctx.adjustment {
+        let m = effectcraft_effects::transform_matrix_px(ctx.params, |p| b.to_px(p));
+        let sides = effectcraft_effects::transform_grow(&[m], b.img.width, b.img.height);
+        b.pad_sides(e, sides)?;
+    }
+    let m = effectcraft_effects::transform_matrix_px(ctx.params, |p| b.to_px(p));
     let sampling = if ctx.params.e("sampling") == 1 { Sampling::Bicubic } else { Sampling::Bilinear };
     let empty = e.image(b.img.width, b.img.height);
     b.img = ops::warp(e, &empty, &b.img, &m, sampling, effectcraft_color::BlendMode::Normal, opacity, 0, None);

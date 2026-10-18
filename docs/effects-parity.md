@@ -31,7 +31,7 @@ corpus compares renders, each effect is assumed to differ somewhere, and users k
 | Blur & Sharpen | 16 | 15 | Radial Blur keeps the layer edges as After Effects 2026 (713 now pixel-identical); Gaussian Blur interaction and output to be measured first ([fidelity/ae-2026-acceptance.md](fidelity/ae-2026-acceptance.md)) |
 | Channel | 13 | 13 | — |
 | Color Correction | 40 | 40 | Tint has Swap Colors (#963); ACES 2.0 / OCIO 2.5 (26.5); Apply Color LUT (#514) and 32-bpc blending (#494) are closed |
-| Distort | 39 | 35 | Liquify has no viewer brush; #303 (Mesh Warp drag) and #534 (CC Power Pin Unstretch) are closed |
+| Distort | 39 | 35 | Transform matches After Effects 2026 renders (skew after rotation, drawn outside the layer); Liquify has no viewer brush; #303 (Mesh Warp drag) and #534 (CC Power Pin Unstretch) are closed |
 | Expression Controls | 9 | 9 | — |
 | Generate | 26 | 25 | Fractal on the CPU (needs f64); #526 (Reset) and #536 (Write-on marks) are closed |
 | Immersive Video | 12 | 12 | — |
@@ -70,6 +70,7 @@ the GPU is performance, not parity.
 | 2026-10-19 | minor | Venetian Blinds: stripes measured from the layer centre, both band edges Gaussian (σ = Feather / 2), measured against After Effects 2026 (CPU and GPU) |
 | 2026-10-19 | minor | Radial Wipe: Feather is in pixels on both edges of the wiped wedge (was degrees on the moving edge only), measured against After Effects 2026 (CPU and GPU) |
 | 2026-10-19 | minor | Fractal / Turbulent Noise: lattice cell = Scale × 2/3 px (Block noise every 66.7 px at Scale 100, as After Effects 2026), CPU and GPU |
+| 2026-10-19 | minor | Transform: After Effects' skew order and output beyond the layer bounds, measured against After Effects 2026 renders of three cases (CPU and GPU) |
 | 2026-10-12 | minor | Parameters 3,014 to 3,017 (effects.md); #303, #514, #526, #533–#536 marked closed instead of pending |
 | 2026-10-12 | minor | Effect colour labels (26.5) added in Effect Controls |
 | 2026-10-12 | minor | Tint's Swap Colors button and agent-drivable command (#963); undo/redo, instance targeting, animated layer-time edits and invalid-input tests |

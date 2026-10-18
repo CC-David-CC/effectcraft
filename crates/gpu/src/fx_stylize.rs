@@ -970,15 +970,7 @@ pub(crate) fn transform_blur(ctx: &EffectCtx) -> bool {
 
 /// distort::transform_matrix.
 fn transform_matrix(pr: &effectcraft_effects::Params, b: &GBuf) -> Mat3 {
-    let anchor = b.to_px(pr.v2("anchor"));
-    let pos = b.to_px(pr.v2("position"));
-    let sh = pr.f("scaleHeight");
-    let sw = if pr.b("uniform") { sh } else { pr.f("scaleWidth") };
-    Mat3::translate(vec2(pos.0, pos.1))
-        * Mat3::rotate_deg(pr.f("rotation"))
-        * Mat3::skew_deg(pr.f("skew"), pr.f("skewAxis"))
-        * Mat3::scale(vec2(sw / 100.0, sh / 100.0))
-        * Mat3::translate(vec2(-anchor.0, -anchor.1))
+    effectcraft_effects::transform_matrix_px(pr, |p| b.to_px(p))
 }
 
 /// distort::transform's motion blur: the transform at Samples instants across the shutter,
@@ -988,15 +980,24 @@ pub(crate) fn transform(e: &mut Enc, ctx: &EffectCtx, mut b: GBuf) -> Option<GBu
     let host = ctx.env.host?;
     let sampling = if ctx.params.e("sampling") == 1 { Sampling::Bicubic } else { Sampling::Bilinear };
     let fd = 1.0 / ctx.fps();
+    let samples: Vec<effectcraft_effects::Params> =
+        (0..n).filter_map(|k| host.params_at(ctx.time + (phase + angle * k as f64 / (n - 1) as f64) / 360.0 * fd)).collect();
+    if samples.is_empty() {
+        // The CPU renders the frame sharp.
+        return None;
+    }
+    if !ctx.adjustment {
+        let ms: Vec<Mat3> = samples.iter().map(|pr| transform_matrix(pr, &b)).collect();
+        let sides = effectcraft_effects::transform_grow(&ms, b.img.width, b.img.height);
+        b.pad_sides(e, sides)?;
+    }
     let (w, h) = (b.img.width, b.img.height);
     let mut acc = e.image(w, h);
     let mut count = 0u32;
-    for k in 0..n {
-        let t = ctx.time + (phase + angle * k as f64 / (n - 1) as f64) / 360.0 * fd;
-        let Some(pr) = host.params_at(t) else { continue };
+    for pr in &samples {
         let op = pr.f("opacity") as f32 / 100.0;
         let empty = e.image(w, h);
-        let one = ops::warp(e, &empty, &b.img, &transform_matrix(&pr, &b), sampling, BlendMode::Normal, op, 0, None);
+        let one = ops::warp(e, &empty, &b.img, &transform_matrix(pr, &b), sampling, BlendMode::Normal, op, 0, None);
         let sum = e.image(w, h);
         e.pixels("fxs_add", &Params::default(), &acc, Some(&one), &sum, None);
         acc = sum;

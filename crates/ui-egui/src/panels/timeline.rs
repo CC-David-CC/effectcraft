@@ -4649,12 +4649,12 @@ mod tests {
     #[test]
     fn the_layer_context_menu_draws_in_the_interface_language() {
         let caps = LayerMenuCaps { vector: true, text: false };
-        let mut actions = Vec::new();
+        let (mut auto, mut actions) = (crate::automation::Registry::default(), Vec::new());
         crate::i18n::set_current("zh-hans");
-        let menu = drawn_text(|ui| layer_menu(ui, &[7], caps, &mut actions));
+        let menu = drawn_text(|ui| layer_menu(ui, &[7], caps, (&mut auto, "t"), &mut actions));
         let effects = drawn_text(|ui| effects_submenu(ui, &[7], &mut |_: &mut egui::Ui, _: &str, _: &str, _: serde_json::Value| {}));
         crate::i18n::set_current("en");
-        let english = drawn_text(|ui| layer_menu(ui, &[7], caps, &mut actions));
+        let english = drawn_text(|ui| layer_menu(ui, &[7], caps, (&mut auto, "t"), &mut actions));
         for label in ["新建", "图层设置...", "从矢量图层创建形状", "预合成...", "重复", "拆分图层", "删除"] {
             assert!(menu.iter().any(|t| t == label), "{label} missing from {menu:?}");
         }

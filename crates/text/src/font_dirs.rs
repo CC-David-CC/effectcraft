@@ -498,7 +498,7 @@ mod tests {
         write(&first, "<fontconfig><dir>/unreadable/fonts</dir></fontconfig>");
         write(&second, "<fontconfig><dir>/readable/fonts</dir></fontconfig>");
         let _cleanup = Cleanup { root: root.clone(), file: first.clone(), permissions: std::fs::metadata(&first).unwrap().permissions() };
-        std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0o000)).unwrap();
         if std::fs::File::open(&first).is_ok() {
             eprintln!("skipped: this process can read mode-000 files");
             return;

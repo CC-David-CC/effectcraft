@@ -16,8 +16,8 @@ fn tga(pixels: [[u8; 4]; 4], alpha: bool, rle: bool, top: bool) -> Vec<u8> {
     bytes[14] = 2;
     bytes[16] = if alpha { 32 } else { 24 };
     bytes[17] = if top { 0x20 } else { 0 } | if alpha { 8 } else { 0 };
-    let order = if top { [0, 1, 2, 3] } else { [2, 3, 0, 1] };
-    for row in order.chunks_exact(2) {
+    let rows = if top { [[0, 1], [2, 3]] } else { [[2, 3], [0, 1]] };
+    for row in rows {
         if rle {
             assert_eq!(pixels[row[0]], pixels[row[1]]);
             bytes.push(0x81); // A two-pixel run.

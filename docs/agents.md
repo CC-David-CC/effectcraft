@@ -303,7 +303,9 @@ build real projects through these interfaces; they are worked examples of everyt
   The CLI also renders an exported template directly:
   `effectcraft-cli render --template lt.ectemplate --values values.json --out 'title_[#####].png'`.
   `values.json` is an object such as `{"Title":"John Smith","Bar Color":"#00c080","Bar Opacity":50}`;
-  names follow `essential.set`, including its case-insensitive matching. Values override one
+  names follow `essential.set`, including its case-insensitive matching. A Media Replacement
+  control takes a footage file path (`{"Clip":"/in/clipB.mp4"}`, or `{"path": …}`), which is
+  imported and set as the control's `item`. Values override one
   imported instance; the template file and its source controls keep their defaults. Omit
   `--values` to render those defaults, or use the same options with `render-frame` for a PNG.
   Values must fit in 1 MiB. Invalid JSON, unknown controls and invalid values fail before rendering.

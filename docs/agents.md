@@ -667,6 +667,7 @@ effectcraft-cli render-frame main.ecproj --time 1 --max-side 640 --out f.png --j
 effectcraft-cli exec layer.newNull --bridge 9877                 # same commands, against the live app
 effectcraft-cli exec file.exportLottie '{"comp":"Main","path":"main.json","includeExpressions":true}' main.ecproj --json
 effectcraft-cli exec file.importLottie '{"path":"anim.json"}' main.ecproj --save
+effectcraft-cli render main.ecproj --comp Main --out main.mov --format prores --progress   # progress lines on stderr for a program that reads them
 ```
 
 Scripts written against After Effects' documented scripting API run with `script`:

@@ -37,7 +37,7 @@ corpus compares renders, each effect is assumed to differ somewhere, and users k
 | Immersive Video | 12 | 12 | — |
 | Keying | 12 | 12 | Key Cleaner approximated; #533 (wire-removal Frame Offset) is closed |
 | Matte | 6 | 4 | Mocha shape reads our documented JSON, not Mocha's format |
-| Noise & Grain | 13 | 12 | Curl Noise (#463); Match Grain on the CPU |
+| Noise & Grain | 13 | 12 | Fractal / Turbulent Noise lattice matches After Effects 2026 (Scale 100 = 66.7 px cells); the noise values themselves differ (seeds) and Soft Linear contrast is about 20 % lower than AE's; Curl Noise (#463); Match Grain on the CPU |
 | Obsolete | 9 | 9 | — |
 | Paint | 1 | 0 | Tablet pressure not read ([hardware-parity.md](hardware-parity.md)) |
 | Perspective | 10 | 9 | Chromatic Aberrations pan/tilt crash (#580) |
@@ -69,6 +69,7 @@ the GPU is performance, not parity.
 | 2026-10-19 | minor | Radial Blur repeats the edge instead of sampling transparency outside the layer, measured against After Effects 2026 renders (CPU and GPU) |
 | 2026-10-19 | minor | Venetian Blinds: stripes measured from the layer centre, both band edges Gaussian (σ = Feather / 2), measured against After Effects 2026 (CPU and GPU) |
 | 2026-10-19 | minor | Radial Wipe: Feather is in pixels on both edges of the wiped wedge (was degrees on the moving edge only), measured against After Effects 2026 (CPU and GPU) |
+| 2026-10-19 | minor | Fractal / Turbulent Noise: lattice cell = Scale × 2/3 px (Block noise every 66.7 px at Scale 100, as After Effects 2026), CPU and GPU |
 | 2026-10-12 | minor | Parameters 3,014 to 3,017 (effects.md); #303, #514, #526, #533–#536 marked closed instead of pending |
 | 2026-10-12 | minor | Effect colour labels (26.5) added in Effect Controls |
 | 2026-10-12 | minor | Tint's Swap Colors button and agent-drivable command (#963); undo/redo, instance targeting, animated layer-time edits and invalid-input tests |

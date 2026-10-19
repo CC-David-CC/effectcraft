@@ -529,9 +529,19 @@ fn pointwise(e: &mut Enc, id: &str, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
             let sub = (f("subSettings/subScaling") / 100.0).clamp(0.1, 1.0);
             p.u[0] = [10, kind, octaves.ceil() as u32, f("evolutionOptions/seed") as u32 ^ 0x51ed];
             p.u[1] = [pr.b("invert") as u32, pr.e("overflow"), mode, 0];
-            p.f[0] = [f("contrast") as f32 / 100.0, f("brightness") as f32 / 100.0, (sw * b.scale).max(1.0) as f32, (octaves - octaves.floor()) as f32];
+            p.f[0] = [
+                f("contrast") as f32 / 100.0,
+                f("brightness") as f32 / 100.0,
+                (sw * effectcraft_effects::NOISE_CELL * b.scale).max(1.0) as f32,
+                (octaves - octaves.floor()) as f32,
+            ];
             p.f[1] = [ox as f32, oy as f32, sr, cr];
-            p.f[2] = [f("evolution") as f32 / 360.0, f("blend") as f32 / 100.0, (f("opacity") as f32 / 100.0).clamp(0.0, 1.0), (sh * b.scale).max(1.0) as f32];
+            p.f[2] = [
+                f("evolution") as f32 / 360.0,
+                f("blend") as f32 / 100.0,
+                (f("opacity") as f32 / 100.0).clamp(0.0, 1.0),
+                (sh * effectcraft_effects::NOISE_CELL * b.scale).max(1.0) as f32,
+            ];
             p.f[3] = [(f("subSettings/subInfluence") as f32 / 100.0).clamp(0.0, 1.0), 1.0 / sub as f32, 0.0, 0.0];
         }
         _ => return None,

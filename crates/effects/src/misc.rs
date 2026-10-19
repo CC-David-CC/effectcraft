@@ -556,16 +556,58 @@ fn radial_wipe(ctx: &EffectCtx, mut b: Buf) -> Buf {
     b
 }
 
+/// Standard normal CDF Φ (Abramowitz & Stegun 7.1.26 erf, |error| < 1.5e-7).
+fn norm_cdf(z: f64) -> f64 {
+    let x = z.abs() / std::f64::consts::SQRT_2;
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    let poly = t * (0.254_829_592 + t * (-0.284_496_736 + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let erf = 1.0 - poly * (-x * x).exp();
+    if z >= 0.0 { 0.5 * (1.0 + erf) } else { 0.5 * (1.0 - erf) }
+}
+
+/// Venetian Blinds: how much of a pixel at phase `d` (0..`width`) a band of `done × width`
+/// covers, its two edges softened by a Gaussian of σ = Feather / 2 (σ in the units of `width`).
+/// Fitted to After Effects 2026 (Completion 40, Direction 30, Width 50, Feather 5 on 960 × 540
+/// and 480 × 270 layers): band from phase 0 to done × width, both edges Gaussian, within 6/255.
+pub fn venetian_cover(d: f64, width: f64, done: f64, sigma: f64) -> f64 {
+    let band = done * width;
+    if sigma < 1e-3 {
+        return if d < band { 1.0 } else { 0.0 };
+    }
+    // Wider than a few blinds the stripes blur into an even veil.
+    if sigma > 8.0 * width {
+        return done.clamp(0.0, 1.0);
+    }
+    let n = ((4.0 * sigma / width).ceil() as i64 + 1).clamp(1, 40);
+    let mut t = 0.0;
+    for k in -n..=n {
+        let u = d + k as f64 * width;
+        t += norm_cdf(u / sigma) - norm_cdf((u - band) / sigma);
+    }
+    t.clamp(0.0, 1.0)
+}
+
+/// Venetian Blinds' phase origin in layer pixels: the layer centre plus 0.6 px (fitted to the
+/// AE renders above; the stripes are measured from the layer's centre, not its corner).
+pub fn venetian_origin(layer_size: [f64; 2]) -> [f64; 2] {
+    [layer_size[0] / 2.0 + 0.6, layer_size[1] / 2.0 + 0.6]
+}
+
 fn venetian(ctx: &EffectCtx, mut b: Buf) -> Buf {
-    let done = ctx.params.f("completion") / 100.0;
+    let done = (ctx.params.f("completion") / 100.0).clamp(0.0, 1.0);
+    if done <= 0.0 {
+        return b;
+    }
     let ang = ctx.params.f("direction").to_radians();
     let width = (ctx.params.f("width") * b.scale).max(1.0);
-    let feather = (ctx.params.f("feather") * b.scale).max(0.001);
+    let sigma = ctx.params.f("feather").max(0.0) * b.scale / 2.0;
     let (dx, dy) = (ang.cos(), ang.sin());
+    let (ox, oy) = b.to_px(venetian_origin(ctx.layer_size));
     b.img.rows_mut().for_each(|(y, row)| {
+        let ry = (y as f64 + 0.5 - oy) * dy;
         for (x, px) in row.iter_mut().enumerate() {
-            let d = ((x as f64 + 0.5) * dx + (y as f64 + 0.5) * dy).rem_euclid(width);
-            let k = ((d - done * width) / feather + 0.5).clamp(0.0, 1.0) as f32;
+            let d = ((x as f64 + 0.5 - ox) * dx + ry).rem_euclid(width);
+            let k = (1.0 - venetian_cover(d, width, done, sigma)) as f32;
             for c in px.iter_mut() {
                 *c *= k;
             }
@@ -867,6 +909,50 @@ mod tests {
             let p = o.img.get(x, 540);
             assert!((p[0] * 255.0 - ae).abs() <= 2.0 && (p[3] - 1.0).abs() < 1e-4, "x {x}: {p:?} vs AE {ae}");
         }
+    }
+
+    /// After Effects 2026, Venetian Blinds Completion 40, Direction 30, Width 50, Feather 5 on
+    /// an opaque 480 × 270 layer: alpha (0..255) along row y = 135. The transparent band starts
+    /// at the layer centre's phase, both edges are Gaussian (σ = Feather / 2).
+    #[test]
+    fn venetian_blinds_match_after_effects() {
+        let img = effectcraft_raster::Image::filled(480, 270, [0.5, 0.5, 0.5, 1.0]);
+        let vals = [("completion", Value::Scalar(40.0)), ("direction", Value::Scalar(30.0)), ("width", Value::Scalar(50.0)), ("feather", Value::Scalar(5.0))];
+        let o = run_fx("ec.transition.venetian", &vals, img, 0.0, EffectEnv::default());
+        let ae = [
+            (200, 5.0),
+            (203, 47.0),
+            (206, 145.0),
+            (209, 228.0),
+            (212, 253.0),
+            (224, 255.0),
+            (236, 238.0),
+            (239, 168.0),
+            (242, 66.0),
+            (245, 10.0),
+            (251, 0.0),
+            (257, 2.0),
+            (260, 31.0),
+        ];
+        for (x, a) in ae {
+            let got = o.img.get(x, 135)[3] * 255.0;
+            assert!((got - a).abs() <= 6.0, "x {x}: alpha {got} vs AE {a}");
+        }
+        // No completion leaves the layer; full completion clears it; no feather is a hard edge.
+        let full = [("completion", Value::Scalar(100.0)), ("feather", Value::Scalar(5.0))];
+        let img = effectcraft_raster::Image::filled(40, 20, [0.5, 0.5, 0.5, 1.0]);
+        assert!(run_fx("ec.transition.venetian", &full, img.clone(), 0.0, EffectEnv::default()).img.data.iter().all(|p| p[3] < 1e-4));
+        assert_eq!(run_fx("ec.transition.venetian", &[("completion", Value::Scalar(0.0))], img.clone(), 0.0, EffectEnv::default()).img, img);
+        let hard = run_fx(
+            "ec.transition.venetian",
+            &[("completion", Value::Scalar(50.0)), ("width", Value::Scalar(10.0)), ("feather", Value::Scalar(0.0))],
+            img,
+            0.0,
+            EffectEnv::default(),
+        );
+        assert!(hard.img.data.iter().all(|p| p[3] == 0.0 || p[3] == 1.0));
+        // A feather far wider than the blinds is an even veil.
+        assert_eq!(venetian_cover(3.0, 10.0, 0.5, 1e9), 0.5);
     }
 
     #[test]

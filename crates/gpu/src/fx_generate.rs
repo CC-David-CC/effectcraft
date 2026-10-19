@@ -204,24 +204,32 @@ fn linear_wipe(e: &mut Enc, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
 }
 
 fn venetian(e: &mut Enc, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
-    let done = ctx.params.f("completion") / 100.0;
+    let done = (ctx.params.f("completion") / 100.0).clamp(0.0, 1.0);
+    if done <= 0.0 {
+        return Some(b);
+    }
     let ang = ctx.params.f("direction").to_radians();
     let width = (ctx.params.f("width") * b.scale).max(1.0);
-    let feather = (ctx.params.f("feather") * b.scale).max(0.001);
+    let sigma = ctx.params.f("feather").max(0.0) * b.scale / 2.0;
+    // The CPU's even veil and term count (effects::venetian_cover).
+    if sigma > 8.0 * width {
+        return None;
+    }
     let (dx, dy) = (ang.cos(), ang.sin());
-    let mut data = Vec::with_capacity((6 * b.img.width + 2 * b.img.height) as usize);
+    let (ox, oy) = b.to_px(effectcraft_effects::venetian_origin(ctx.layer_size));
+    let mut data = Vec::with_capacity((4 * b.img.width + 2 * b.img.height) as usize);
     for x in 0..b.img.width {
-        let cx = ((x as f64 + 0.5) * dx).rem_euclid(width);
-        data.extend(hl(cx - done * width));
-        data.extend(hl(cx - width - done * width));
+        let cx = ((x as f64 + 0.5 - ox) * dx).rem_euclid(width);
+        data.extend(hl(cx));
         data.extend(hl(cx - width));
     }
     for y in 0..b.img.height {
-        data.extend(hl(((y as f64 + 0.5) * dy).rem_euclid(width)));
+        data.extend(hl(((y as f64 + 0.5 - oy) * dy).rem_euclid(width)));
     }
     let mut p = Params::default();
-    p.u[0][0] = 6 * b.img.width;
-    p.f[0][0] = feather as f32;
+    p.u[0][0] = 4 * b.img.width;
+    p.u[0][1] = if sigma < 1e-3 { 0 } else { ((4.0 * sigma / width).ceil() as u32 + 1).clamp(1, 40) };
+    p.f[0] = [width as f32, (done * width) as f32, sigma as f32, 0.0];
     run(e, "gen_venetian", &p, b, None, Some(&data))
 }
 

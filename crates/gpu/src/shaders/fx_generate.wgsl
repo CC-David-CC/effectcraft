@@ -42,6 +42,15 @@ fn gen_sum(a: vec2<f32>, b: vec2<f32>) -> f32 {
     return (a.x + b.x) + (a.y + b.y);
 }
 
+// Standard normal CDF (Abramowitz & Stegun 7.1.26 erf; effects::misc::norm_cdf).
+fn gen_norm_cdf(z: f32) -> f32 {
+    let x = abs(z) * 0.70710678;
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let erf = 1.0 - poly * exp(-x * x);
+    return select(0.5 * (1.0 - erf), 0.5 * (1.0 + erf), z >= 0.0);
+}
+
 // ---------------------------------------------------------------- Radial Blur (raster::radial_blur)
 
 // u[0] = (zoom, samples); f[0] = (cx, cy); data = per sample (sin, cos) (spin) or k (zoom).
@@ -238,9 +247,9 @@ fn gen_linear_wipe(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(out, p, textureLoad(src, p, 0) * k);
 }
 
-// Venetian Blinds. Per column (6 floats): (cx − done·w), (cx − w − done·w), (cx − w) as
-// (hi, lo), with cx = ((x + 0.5)·dx) mod w; per row (2 floats): ((y + 0.5)·dy) mod w.
-// u[0].x = row table offset; f[0].x = feather.
+// Venetian Blinds (effects::venetian_cover). Per column (4 floats): cx, (cx − w) as (hi, lo),
+// with cx = ((x + 0.5 − ox)·dx) mod w; per row (2 floats): ((y + 0.5 − oy)·dy) mod w.
+// u[0] = (row table offset, Gaussian terms per side, 0 = hard edge); f[0] = (w, band, σ).
 @compute @workgroup_size(16, 16)
 fn gen_venetian(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dims = out_dims();
@@ -248,18 +257,28 @@ fn gen_venetian(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (p.x >= dims.x || p.y >= dims.y) {
         return;
     }
-    let col = 6u * u32(p.x);
+    let col = 4u * u32(p.x);
     let row = gen_hl(P.u[0].x + 2u * u32(p.y));
     // (d mod w) wraps once the column and row terms reach w.
-    let wrapped = gen_sum(gen_hl(col + 4u), row) >= 0.0;
-    var t: f32;
-    if (wrapped) {
-        t = gen_sum(gen_hl(col + 2u), row);
-    } else {
-        t = gen_sum(gen_hl(col), row);
+    var d = gen_sum(gen_hl(col), row);
+    if (gen_sum(gen_hl(col + 2u), row) >= 0.0) {
+        d = gen_sum(gen_hl(col + 2u), row);
     }
-    let k = clamp(t / P.f[0].x + 0.5, 0.0, 1.0);
-    textureStore(out, p, textureLoad(src, p, 0) * k);
+    let w = P.f[0].x;
+    let band = P.f[0].y;
+    let sigma = P.f[0].z;
+    let n = i32(P.u[0].y);
+    var t = 0.0;
+    if (n == 0) {
+        t = select(0.0, 1.0, d < band);
+    } else {
+        for (var k = -n; k <= n; k++) {
+            let u = d + f32(k) * w;
+            t += gen_norm_cdf(u / sigma) - gen_norm_cdf((u - band) / sigma);
+        }
+    }
+    let cover = clamp(t, 0.0, 1.0);
+    textureStore(out, p, textureLoad(src, p, 0) * (1.0 - cover));
 }
 
 // Angle (degrees, clockwise from up) of the pixel vector rotated by rotation `r` (0 = start,

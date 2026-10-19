@@ -127,6 +127,20 @@ pub fn glow_sigma(radius: f64) -> f64 {
     (radius * 0.384).max(0.5)
 }
 
+/// Glow's bright pass for the original colours, per channel of the straight colour `v`:
+/// `8 × (v − threshold + 0.0611)`, nothing below. Fitted to After Effects 2026 renders of grey
+/// 0.65 / 0.8 / 0.9 / 1, orange and light-blue solids at Threshold 40 / 60 / 80 % and Radius 10
+/// / 30 (36 channel values, exact to the 8-bit capture): the glow is linear in each channel,
+/// its gain is the same at every threshold and radius, and channels below the threshold add
+/// nothing (an orange solid glows red only).
+pub fn glow_bright_channel(v: f32, thr: f32) -> f32 {
+    (GLOW_GAIN * (v - thr + GLOW_KNEE)).max(0.0)
+}
+
+/// [`glow_bright_channel`]'s gain and threshold offset.
+pub const GLOW_GAIN: f32 = 8.0;
+pub const GLOW_KNEE: f32 = 0.0611;
+
 /// Glow Operation options (blend modes the glow is applied with).
 pub const GLOW_OPERATIONS: [&str; 17] = [
     "Normal",
@@ -201,8 +215,12 @@ fn glow(ctx: &EffectCtx, mut b: Buf) -> Buf {
             let t = glow_ab_t(l, looping, loops, phase, mid);
             let c = [ca[0] + (cb[0] - ca[0]) * t, ca[1] + (cb[1] - ca[1]) * t, ca[2] + (cb[2] - ca[2]) * t];
             *px = [c[0] * k * a, c[1] * k * a, c[2] * k * a, ga];
-        } else {
+        } else if alpha_based {
             *px = [px[0] * k, px[1] * k, px[2] * k, ga];
+        } else {
+            // Original colours: each channel of the straight colour against the threshold.
+            let c = [px[0] / a, px[1] / a, px[2] / a].map(|v| glow_bright_channel(v, thr) * a);
+            *px = [c[0], c[1], c[2], ga];
         }
     });
     let s = glow_sigma(radius);
@@ -790,6 +808,38 @@ mod tests {
                 assert!(p[0].abs() < 1e-6, "the halo is black: {p:?}");
             }
         }
+    }
+
+    /// After Effects 2026, Glow at Threshold 60 %, Radius 10, Intensity 0.25 on 200 × 200
+    /// solids over red: the glow 1.5 px outside the left edge, premultiplied (the green / blue
+    /// channels of the render, where the red background adds nothing), and its alpha 0.353.
+    #[test]
+    fn glow_brightness_matches_after_effects() {
+        // (solid colour, channel, AE glow value 0..255)
+        let cases = [
+            ([0.65, 0.65, 0.65], 1, 20.0),
+            ([0.8, 0.8, 0.8], 1, 47.0),
+            ([0.9, 0.9, 0.9], 1, 65.0),
+            ([1.0, 1.0, 1.0], 1, 83.0),
+            ([1.0, 0.5, 0.0], 1, 0.0),
+            ([0.2, 0.6, 1.0], 1, 11.0),
+            ([0.2, 0.6, 1.0], 2, 83.0),
+        ];
+        for (c, ch, ae) in cases {
+            let img = effectcraft_raster::Image::filled(200, 200, [c[0], c[1], c[2], 1.0]);
+            let set = [("threshold", num(60.0)), ("radius", num(10.0)), ("intensity", num(0.25))];
+            let o = run_fx("ec.stylize.glow", &set, img, 0.0, EffectEnv::default());
+            let (bx, by) = o.to_px([-1.5, 100.0]);
+            let p = o.img.get(bx.floor() as i64, by.floor() as i64);
+            assert!((p[ch] * 255.0 - ae).abs() <= 2.5, "{c:?} channel {ch}: {} vs AE {ae}", p[ch] * 255.0);
+            assert!((p[3] - 0.353).abs() < 3.0 / 255.0, "{c:?}: alpha {}", p[3]);
+        }
+        // Intensity scales the colour linearly: white at Intensity 1 is 3.7 × its alpha.
+        let white = effectcraft_raster::Image::filled(200, 200, [1.0, 1.0, 1.0, 1.0]);
+        let o = run_fx("ec.stylize.glow", &[("threshold", num(60.0)), ("radius", num(10.0))], white, 0.0, EffectEnv::default());
+        let (bx, by) = o.to_px([-1.5, 100.0]);
+        let p = o.img.get(bx.floor() as i64, by.floor() as i64);
+        assert!((p[1] / p[3] - 3.69).abs() < 0.05, "{p:?}");
     }
 
     #[test]

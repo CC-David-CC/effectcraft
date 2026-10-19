@@ -42,7 +42,7 @@ corpus compares renders, each effect is assumed to differ somewhere, and users k
 | Paint | 1 | 0 | Tablet pressure not read ([hardware-parity.md](hardware-parity.md)) |
 | Perspective | 10 | 9 | Chromatic Aberrations pan/tilt crash (#580) |
 | Simulation | 18 | 18 | Particle Playground lacks Particle Exploder, text particles, ephemeral mapper; CC Particle World camera fixed (#397) |
-| Stylize | 25 | 25 | Glow's halo (coverage of a dim layer's edge) and blur width match After Effects 2026 renders; the brightness of glows above the threshold is not matched yet; Motion Tile output size (#369) |
+| Stylize | 25 | 25 | Glow's halo (coverage of a dim layer's edge) and blur width match After Effects 2026 renders; glows above the threshold match too (each channel 8 × (value − threshold + 0.061), measured at three thresholds and two radii); Composite Original's labels are swapped against After Effects (EffectCraft's On Top adds the glow over the original, which After Effects calls Behind); Motion Tile output size (#369) |
 | Text | 2 | 2 | — |
 | Time | 8 | 8 | #535 (Pixel Motion Blur, Vector Detail) is closed |
 | Transition | 17 | 17 | — |
@@ -64,6 +64,7 @@ the GPU is performance, not parity.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | minor | Glow (original colours): bright pass per channel, 8 × (value − threshold + 0.061), measured against After Effects 2026 (CPU and GPU) |
 | 2026-10-19 | minor | Glow (colour channels): the glow covers the layer's blurred alpha, blur σ = 0.384 × radius, measured against After Effects 2026 renders (CPU and GPU) |
 | 2026-10-12 | minor | Parameters 3,014 to 3,017 (effects.md); #303, #514, #526, #533–#536 marked closed instead of pending |
 | 2026-10-12 | minor | Effect colour labels (26.5) added in Effect Controls |

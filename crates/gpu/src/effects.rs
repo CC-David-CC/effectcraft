@@ -324,10 +324,11 @@ fn glow(e: &mut Enc, ctx: &EffectCtx, mut b: GBuf) -> Option<GBuf> {
     p.f[2] = cb;
     let bright = e.image(b.img.width, b.img.height);
     e.pixels("glow_bright", &p, &b.img, None, &bright, None);
-    let s = (radius / 2.0).max(0.5);
+    let s = effectcraft_effects::glow_sigma(radius);
     let blurred = gaussian_blur(e, &bright, s * kx, s * ky, false);
     let mut p = Params::default();
     p.u[0][0] = ctx.params.e("operation").min(2);
+    p.u[0][1] = (ctx.params.e("based") == 0) as u32;
     p.f[0][0] = intensity;
     let out = e.scratch(b.img.width, b.img.height);
     e.pixels("glow_combine", &p, &b.img, Some(&blurred), &out, None);

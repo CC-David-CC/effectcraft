@@ -120,6 +120,13 @@ pub fn glow_ab_t(l: f32, looping: u32, loops: f32, phase: f32, mid: f32) -> f32 
     t.max(0.0).powf(0.5f32.ln() / m.ln())
 }
 
+/// Glow's blur: a Gaussian of σ = 0.384 × Glow Radius. Fitted to After Effects 2026 (cases
+/// 807 and 808, Glow Radius 10 and 30 on a grey solid): the edge profile of the glow's
+/// coverage is an erfc step of that σ within 1.7/255 (it was σ = radius / 2).
+pub fn glow_sigma(radius: f64) -> f64 {
+    (radius * 0.384).max(0.5)
+}
+
 /// Glow Operation options (blend modes the glow is applied with).
 pub const GLOW_OPERATIONS: [&str; 17] = [
     "Normal",
@@ -183,23 +190,27 @@ fn glow(ctx: &EffectCtx, mut b: Buf) -> Buf {
         // Glow Based On: brightness from the colours, or from the alpha channel.
         let l = if alpha_based { a } else { luminance(px[0] / a, px[1] / a, px[2] / a) };
         let k = ((l - thr) / (1.0 - thr).max(1e-3)).clamp(0.0, 1.0);
+        // Based on the colour channels, the glow's coverage is the layer's whole alpha, below
+        // the threshold too: After Effects darkens what lies under a dim layer's edge (glow_alpha).
+        let ga = if alpha_based { k * a } else { a };
         if let Some(map) = &arbitrary {
             let t = glow_ab_t(l, looping, loops, phase, mid);
             let c = map.iter().map(|cv| cv.as_ref().map_or(t, |cv| cv.eval(t))).collect::<Vec<f32>>();
-            *px = [c[0] * k * a, c[1] * k * a, c[2] * k * a, k * a];
+            *px = [c[0] * k * a, c[1] * k * a, c[2] * k * a, ga];
         } else if use_colors {
             let t = glow_ab_t(l, looping, loops, phase, mid);
             let c = [ca[0] + (cb[0] - ca[0]) * t, ca[1] + (cb[1] - ca[1]) * t, ca[2] + (cb[2] - ca[2]) * t];
-            *px = [c[0] * k * a, c[1] * k * a, c[2] * k * a, k * a];
+            *px = [c[0] * k * a, c[1] * k * a, c[2] * k * a, ga];
         } else {
-            *px = px.map(|v| v * k);
+            *px = [px[0] * k, px[1] * k, px[2] * k, ga];
         }
     });
-    let s = (radius / 2.0).max(0.5);
+    let s = glow_sigma(radius);
     let blurred = gaussian_blur(&bright, s * kx, s * ky, false);
     let mode = ctx.params.e("operation");
     b.img.data.par_iter_mut().zip(blurred.data.par_iter()).for_each(|(o, g)| {
-        let g = g.map(|v| v * intensity);
+        // Intensity scales the glow's colour; with the colour channels its coverage stays.
+        let g = [g[0] * intensity, g[1] * intensity, g[2] * intensity, if alpha_based { g[3] * intensity } else { g[3] }];
         match mode {
             // Behind: the glow shows only where the original is transparent.
             1 => {
@@ -747,6 +758,38 @@ mod tests {
             }
         }
         img
+    }
+
+    /// After Effects 2026 (cases 524, 807, 808, 809): Glow on a 50 % grey solid, which is below
+    /// the 60 % threshold, still covers a blurred copy of the layer's alpha with black, so the
+    /// red layer underneath darkens outside the edge. The halo is the same at Intensity 1 and 3
+    /// and with Composite Original On Top or Behind; its width follows Glow Radius.
+    #[test]
+    fn glow_halo_matches_after_effects() {
+        let grey = effectcraft_raster::Image::filled(200, 120, [0.5, 0.5, 0.5, 1.0]);
+        // AE's red under the halo at 0.5, 1.5, 3.5, 5.5 and 7.5 px outside the left edge
+        // (radius 10) and at 0.5, 5.5, 10.5, 20.5 px (radius 30); halo alpha = 1 − red.
+        let r10 = [(0.5, 140.0), (1.5, 165.0), (3.5, 208.0), (5.5, 234.0), (7.5, 248.0)];
+        let r30 = [(0.5, 132.0), (5.5, 173.0), (10.5, 208.0), (20.5, 245.0)];
+        for (radius, intensity, operation, profile) in [(10.0, 1.0, 1, &r10[..]), (10.0, 3.0, 1, &r10[..]), (10.0, 1.0, 0, &r10[..]), (30.0, 1.0, 1, &r30[..])]
+        {
+            let set = [
+                ("based", Value::Enum(1)),
+                ("threshold", num(60.0)),
+                ("radius", num(radius)),
+                ("intensity", num(intensity)),
+                ("operation", Value::Enum(operation)),
+            ];
+            let o = run_fx("ec.stylize.glow", &set, grey.clone(), 0.0, EffectEnv::default());
+            for &(d, red) in profile {
+                // Layer x = −d (pixel centre), mid-height; over AE's red: R = 1 − α, colour 0.
+                let (bx, by) = o.to_px([-d, 60.0]);
+                let p = o.img.get(bx.floor() as i64, by.floor() as i64);
+                let ae = 1.0 - red / 255.0;
+                assert!((p[3] - ae).abs() < 3.0 / 255.0, "radius {radius} intensity {intensity} op {operation} at {d} px: alpha {} vs AE {ae}", p[3]);
+                assert!(p[0].abs() < 1e-6, "the halo is black: {p:?}");
+            }
+        }
     }
 
     #[test]

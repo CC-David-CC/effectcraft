@@ -137,7 +137,8 @@ pub fn glow_bright_channel(v: f32, thr: f32) -> f32 {
     (GLOW_GAIN * (v - thr + GLOW_KNEE)).max(0.0)
 }
 
-/// [`glow_bright_channel`]'s gain and threshold offset.
+/// [`glow_bright_channel`]'s gain and threshold offset. `kernels.wgsl` repeats both as literals;
+/// the GPU test `glow_constants_match_the_cpu` checks that they are these.
 pub const GLOW_GAIN: f32 = 8.0;
 pub const GLOW_KNEE: f32 = 0.0611;
 

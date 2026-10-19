@@ -394,7 +394,9 @@ fn glow_bright(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else if (P.u[0].y != 0u) {
         textureStore(out, p, vec4<f32>(px.xyz * k, ga));
     } else {
-        // Original colours, per channel (effects::misc::glow_bright_channel).
+        // Original colours, per channel (effects::misc::glow_bright_channel): gain 8.0 is
+        // effects::GLOW_GAIN, 0.0611 is effects::GLOW_KNEE (checked by the test
+        // glow_constants_match_the_cpu).
         let c = max(8.0 * (px.xyz / a - vec3<f32>(thr - 0.0611)), vec3<f32>(0.0));
         textureStore(out, p, vec4<f32>(c * a, ga));
     }

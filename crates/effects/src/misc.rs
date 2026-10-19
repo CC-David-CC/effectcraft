@@ -532,30 +532,6 @@ fn linear_wipe(ctx: &EffectCtx, mut b: Buf) -> Buf {
     b
 }
 
-fn radial_wipe(ctx: &EffectCtx, mut b: Buf) -> Buf {
-    let done = ctx.params.f("completion") / 100.0;
-    let start = ctx.params.f("startAngle");
-    let c = b.to_px(ctx.params.v2("center"));
-    let dir = ctx.params.e("wipe");
-    let feather = (ctx.params.f("feather")).max(0.01);
-    b.img.rows_mut().for_each(|(y, row)| {
-        for (x, px) in row.iter_mut().enumerate() {
-            let a = ((x as f64 + 0.5 - c.0).atan2(-(y as f64 + 0.5 - c.1)).to_degrees() - start).rem_euclid(360.0);
-            // Both: the wipe opens in both directions from the start angle at once.
-            let (a, edge) = match dir {
-                1 => (360.0 - a, done * 360.0),
-                2 => (a.min(360.0 - a), done * 180.0),
-                _ => (a, done * 360.0),
-            };
-            let k = ((a - edge) / feather + 0.5).clamp(0.0, 1.0) as f32;
-            for ch in px.iter_mut() {
-                *ch *= k;
-            }
-        }
-    });
-    b
-}
-
 /// Standard normal CDF Φ (Abramowitz & Stegun 7.1.26 erf, |error| < 1.5e-7).
 fn norm_cdf(z: f64) -> f64 {
     let x = z.abs() / std::f64::consts::SQRT_2;
@@ -563,6 +539,66 @@ fn norm_cdf(z: f64) -> f64 {
     let poly = t * (0.254_829_592 + t * (-0.284_496_736 + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
     let erf = 1.0 - poly * (-x * x).exp();
     if z >= 0.0 { 0.5 * (1.0 + erf) } else { 0.5 * (1.0 - erf) }
+}
+
+/// Radial Wipe's wiped wedge relative to the Start Angle: (first ray, span), degrees clockwise
+/// from up. Clockwise (0) wipes from the start angle on, Counterclockwise (1) back from it,
+/// Both (2) half each way.
+pub fn radial_wipe_wedge(wipe: u32, done: f64) -> (f64, f64) {
+    let span = done.clamp(0.0, 1.0) * 360.0;
+    match wipe {
+        1 => (-span, span),
+        2 => (-span / 2.0, span),
+        _ => (0.0, span),
+    }
+}
+
+/// Radial Wipe's feather: a Gaussian of σ = 0.4 × Feather pixels across both edges of the wedge
+/// (After Effects 2026, Feather 20: the edge profile is the same width in pixels at every
+/// radius, σ = 8.0 px, mean error 0.0002 over the frame).
+pub fn radial_wipe_sigma(feather: f64) -> f64 {
+    feather.max(0.0) * 0.4
+}
+
+/// Visible fraction of a pixel at `(ux, uy)` from the centre (y down) for a wiped wedge from
+/// `ray0` (absolute degrees clockwise from up) over `span` degrees: the signed distance to the
+/// wedge's nearer edge, through the feather's Gaussian.
+pub fn radial_wipe_alpha(ux: f64, uy: f64, ray0: f64, span: f64, sigma: f64) -> f64 {
+    let a = (ux.atan2(-uy).to_degrees() - ray0).rem_euclid(360.0);
+    let wiped = a < span;
+    let ray_dist = |deg: f64| {
+        let (s, c) = deg.to_radians().sin_cos();
+        // Ray direction (sin, −cos) in y-down pixels.
+        let along = ux * s - uy * c;
+        if along > 0.0 { (ux * c + uy * s).abs() } else { ux.hypot(uy) }
+    };
+    let d = ray_dist(ray0).min(ray_dist(ray0 + span));
+    let sd = if wiped { -d } else { d };
+    if sigma < 1e-3 {
+        return if wiped { 0.0 } else { 1.0 };
+    }
+    norm_cdf(sd / sigma)
+}
+
+fn radial_wipe(ctx: &EffectCtx, mut b: Buf) -> Buf {
+    let done = (ctx.params.f("completion") / 100.0).clamp(0.0, 1.0);
+    if done <= 0.0 {
+        return b;
+    }
+    let start = ctx.params.f("startAngle");
+    let c = b.to_px(ctx.params.v2("center"));
+    let (w0, span) = radial_wipe_wedge(ctx.params.e("wipe"), done);
+    let sigma = radial_wipe_sigma(ctx.params.f("feather")) * b.scale;
+    let full = done >= 1.0;
+    b.img.rows_mut().for_each(|(y, row)| {
+        for (x, px) in row.iter_mut().enumerate() {
+            let k = if full { 0.0 } else { radial_wipe_alpha(x as f64 + 0.5 - c.0, y as f64 + 0.5 - c.1, start + w0, span, sigma) as f32 };
+            for ch in px.iter_mut() {
+                *ch *= k;
+            }
+        }
+    });
+    b
 }
 
 /// Venetian Blinds: how much of a pixel at phase `d` (0..`width`) a band of `done × width`
@@ -953,6 +989,54 @@ mod tests {
         assert!(hard.img.data.iter().all(|p| p[3] == 0.0 || p[3] == 1.0));
         // A feather far wider than the blinds is an even veil.
         assert_eq!(venetian_cover(3.0, 10.0, 0.5, 1e9), 0.5);
+    }
+
+    /// After Effects 2026, Radial Wipe Completion 40, Start Angle 30, Wipe Counterclockwise,
+    /// Feather 20, centre (800, 500): visible fraction at pixel offsets from the centre on both
+    /// edges (8-bit captures of dark steps, so ±0.05).
+    #[test]
+    fn radial_wipe_feather_matches_after_effects() {
+        let img = effectcraft_raster::Image::filled(400, 300, [1.0, 1.0, 1.0, 1.0]);
+        let vals = [
+            ("completion", Value::Scalar(40.0)),
+            ("startAngle", Value::Scalar(30.0)),
+            ("center", Value::Vec2([200.0, 150.0])),
+            ("wipe", Value::Enum(1)),
+            ("feather", Value::Scalar(20.0)),
+        ];
+        let o = run_fx("ec.transition.radialwipe", &vals, img.clone(), 0.0, EffectEnv::default());
+        let ae = [
+            ((-50, 34), 0.922),
+            ((-52, 30), 0.797),
+            ((-54, 26), 0.609),
+            ((-55, 24), 0.5),
+            ((-56, 22), 0.406),
+            ((-57, 19), 0.266),
+            ((-58, 15), 0.125),
+            ((-104, 60), 0.951),
+            ((-108, 53), 0.732),
+            ((-111, 45), 0.341),
+            ((-114, 37), 0.062),
+            ((22, -56), 0.156),
+            ((26, -54), 0.312),
+            ((30, -52), 0.531),
+            ((34, -50), 0.729),
+            ((37, -47), 0.875),
+            ((53, -108), 0.177),
+            ((67, -99), 0.875),
+        ];
+        for ((dx, dy), a) in ae {
+            let got = o.img.get(200 + dx, 150 + dy)[3];
+            assert!((got - a).abs() < 0.05, "offset ({dx}, {dy}): {got} vs AE {a}");
+        }
+        // 0 % leaves the layer, 100 % clears it, Feather 0 is a hard edge.
+        let at = |c: f64, f: f64| {
+            let v = [("completion", Value::Scalar(c)), ("feather", Value::Scalar(f))];
+            run_fx("ec.transition.radialwipe", &v, img.clone(), 0.0, EffectEnv::default()).img
+        };
+        assert_eq!(at(0.0, 20.0), img);
+        assert!(at(100.0, 20.0).data.iter().all(|p| p[3] == 0.0));
+        assert!(at(50.0, 0.0).data.iter().all(|p| p[3] == 0.0 || p[3] == 1.0));
     }
 
     #[test]

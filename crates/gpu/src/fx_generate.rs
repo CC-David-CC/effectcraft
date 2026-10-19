@@ -234,33 +234,23 @@ fn venetian(e: &mut Enc, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
 }
 
 fn radial_wipe(e: &mut Enc, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
-    let done = ctx.params.f("completion") / 100.0;
+    let done = (ctx.params.f("completion") / 100.0).clamp(0.0, 1.0);
+    if done <= 0.0 {
+        return Some(b);
+    }
     let start = ctx.params.f("startAngle");
     let c = b.to_px(ctx.params.v2("center"));
-    let dir = ctx.params.e("wipe");
-    let feather = ctx.params.f("feather").max(0.01);
-    let edge = if dir == 2 { done * 180.0 } else { done * 360.0 };
-    // Rotations: the start angle, and the start angle ± the edge (where the wipe's edge lies).
-    let rots = [start, start + edge, start - edge].map(|r| r.to_radians().sin_cos());
-    let mut data = Vec::with_capacity(9 * (b.img.width + b.img.height) as usize);
-    for x in 0..b.img.width {
-        let ux = x as f64 + 0.5 - c.0;
-        for (s, co) in rots {
-            data.extend(hl(ux * co));
-            data.push((ux * s) as f32);
-        }
-    }
-    for y in 0..b.img.height {
-        let uy = -(y as f64 + 0.5 - c.1);
-        for (s, co) in rots {
-            data.extend(hl(uy * s));
-            data.push((uy * co) as f32);
-        }
-    }
+    let (w0, span) = effectcraft_effects::radial_wipe_wedge(ctx.params.e("wipe"), done);
+    let sigma = effectcraft_effects::radial_wipe_sigma(ctx.params.f("feather")) * b.scale;
+    let ray0 = start + w0;
+    let (s0, c0) = ray0.to_radians().sin_cos();
+    let (s1, c1) = (ray0 + span).to_radians().sin_cos();
     let mut p = Params::default();
-    p.u[0] = [9 * b.img.width, dir.min(2), 0, 0];
-    p.f[0] = [edge as f32, feather as f32, 0.0, 0.0];
-    run(e, "gen_radial_wipe", &p, b, None, Some(&data))
+    p.u[0] = [(done >= 1.0) as u32, (sigma < 1e-3) as u32, 0, 0];
+    p.f[0] = [c.0 as f32, c.1 as f32, sigma.max(1e-3) as f32, ray0.rem_euclid(360.0) as f32];
+    p.f[1] = [s0 as f32, c0 as f32, s1 as f32, c1 as f32];
+    p.f[2][0] = span as f32;
+    run(e, "gen_radial_wipe", &p, b, None, None)
 }
 
 fn gradient_wipe(e: &mut Enc, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {

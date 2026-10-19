@@ -842,6 +842,33 @@ mod tests {
         assert!((p[1] / p[3] - 3.69).abs() < 0.05, "{p:?}");
     }
 
+    /// After Effects 2026: Radial Blur keeps the layer's edges. Zoom 20 on a flat grey 960 × 540
+    /// solid (case 713) leaves it flat and opaque to the edge (EffectCraft faded the edges toward
+    /// transparency, letting the red layer below show through); on a full-frame horizontal ramp
+    /// (case 829, centre [960, 540]) row 540 reads 2/255 at x = 2 and 253/255 at x = 1917.
+    #[test]
+    fn radial_blur_keeps_the_layer_edges_as_after_effects() {
+        let zoom = |c: [f64; 2]| [("amount", num(20.0)), ("type", Value::Enum(1)), ("center", Value::Vec2(c))];
+        let grey = effectcraft_raster::Image::filled(960, 540, [0.5, 0.5, 0.5, 1.0]);
+        let o = run_fx("ec.blur.radial", &zoom([600.0, 300.0]), grey, 0.0, EffectEnv::default());
+        for (x, y) in [(0, 270), (1, 270), (959, 270), (480, 0), (480, 539), (0, 0), (959, 539)] {
+            let p = o.img.get(x, y);
+            assert!((p[3] - 1.0).abs() < 1e-4 && (p[0] - 0.5).abs() < 1e-4, "({x}, {y}): {p:?}");
+        }
+        let mut ramp = effectcraft_raster::Image::new(1920, 1080);
+        ramp.rows_mut().for_each(|(_, row)| {
+            for (x, px) in row.iter_mut().enumerate() {
+                let v = (x as f32 + 0.5) / 1920.0;
+                *px = [v, v, v, 1.0];
+            }
+        });
+        let o = run_fx("ec.blur.radial", &zoom([960.0, 540.0]), ramp, 0.0, EffectEnv::default());
+        for (x, ae) in [(2, 2.0), (1917, 253.0)] {
+            let p = o.img.get(x, 540);
+            assert!((p[0] * 255.0 - ae).abs() <= 2.0 && (p[3] - 1.0).abs() < 1e-4, "x {x}: {p:?} vs AE {ae}");
+        }
+    }
+
     #[test]
     fn glow_operation_and_arbitrary_map() {
         // Pixels addressed in layer space (Glow pads its buffer).

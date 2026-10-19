@@ -67,7 +67,10 @@ fn gen_radial_blur(@builtin(global_invocation_id) gid: vec3<u32>) {
             let cs = data[2u * i + 1u];
             s = vec2<f32>(c.x + v.x * cs - v.y * sn, c.y + v.x * sn + v.y * cs);
         }
-        acc += sample_bilinear(src, s.x, s.y);
+        // Edge samples repeat (raster::radial_blur).
+        let hi = vec2<f32>(f32(dims.x), f32(dims.y)) - vec2<f32>(0.5);
+        let sc = clamp(s, vec2<f32>(0.5), max(hi, vec2<f32>(0.5)));
+        acc += sample_bilinear(src, sc.x, sc.y);
     }
     textureStore(out, p, acc / f32(n));
 }

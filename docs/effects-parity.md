@@ -28,7 +28,7 @@ corpus compares renders, each effect is assumed to differ somewhere, and users k
 |---|---:|---:|---|
 | 3D Channel | 8 | 8 | Cryptomatte selection can't be set in the UI and the GPU path is slow (#473; quoted names with commas fixed); multi-layer EXR decode shared (#474 open: f16 storage and cache sizing remain) |
 | Audio | 13 | 0 | CPU by design (applied in the mixdown) |
-| Blur & Sharpen | 16 | 15 | Gaussian Blur interaction and output to be measured first ([fidelity/ae-2026-acceptance.md](fidelity/ae-2026-acceptance.md)) |
+| Blur & Sharpen | 16 | 15 | Radial Blur keeps the layer edges as After Effects 2026 (713 now pixel-identical); Gaussian Blur interaction and output to be measured first ([fidelity/ae-2026-acceptance.md](fidelity/ae-2026-acceptance.md)) |
 | Channel | 13 | 13 | — |
 | Color Correction | 40 | 40 | Tint has Swap Colors (#963); ACES 2.0 / OCIO 2.5 (26.5); Apply Color LUT (#514) and 32-bpc blending (#494) are closed |
 | Distort | 39 | 35 | Liquify has no viewer brush; #303 (Mesh Warp drag) and #534 (CC Power Pin Unstretch) are closed |
@@ -66,6 +66,7 @@ the GPU is performance, not parity.
 |---|---|---|
 | 2026-10-19 | minor | Glow (original colours): bright pass per channel, 8 × (value − threshold + 0.061), measured against After Effects 2026 (CPU and GPU) |
 | 2026-10-19 | minor | Glow (colour channels): the glow covers the layer's blurred alpha, blur σ = 0.384 × radius, measured against After Effects 2026 renders (CPU and GPU) |
+| 2026-10-19 | minor | Radial Blur repeats the edge instead of sampling transparency outside the layer, measured against After Effects 2026 renders (CPU and GPU) |
 | 2026-10-12 | minor | Parameters 3,014 to 3,017 (effects.md); #303, #514, #526, #533–#536 marked closed instead of pending |
 | 2026-10-12 | minor | Effect colour labels (26.5) added in Effect Controls |
 | 2026-10-12 | minor | Tint's Swap Colors button and agent-drivable command (#963); undo/redo, instance targeting, animated layer-time edits and invalid-input tests |

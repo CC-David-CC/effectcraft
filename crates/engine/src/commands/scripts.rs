@@ -553,6 +553,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// File ▸ Scripts ▸ Recent Script Files: the ten scripts run last, newest first, kept in the
+    /// settings; Cmd+Alt+Shift+D runs the first one again.
+    #[test]
+    fn recent_script_files_run_again() {
+        use crate::prefs::{MAX_RECENT_SCRIPTS, PREFS_FILE, Prefs, RecentScript};
+        let (mut s, root) = session_in_tmp("recent");
+        assert_eq!(crate::menus::dynamic(&s, "recentScripts", &Default::default()), (vec![], Some("No Recent Script Files")));
+        assert!(bad_params(&s.execute("file.runScript", json!({"recent": 0}))));
+        assert_eq!(s.shortcuts().shortcut_of("file.runScript", &json!({"recent": 0})), Some("Cmd+Alt+Shift+D"));
+        let tool = root.join("Tool.jsx");
+        std::fs::write(&tool, "tool").unwrap();
+        let tool = tool.to_string_lossy().into_owned();
+        s.execute("file.runScript", json!({"path": tool})).unwrap();
+        s.execute("file.runScript", json!({"name": "Rename Layers.jsx"})).unwrap();
+        // A ScriptUI panel opened from File ▸ Scripts is not a recent script file.
+        std::fs::write(root.join("settings").join(PANELS_DIR).join("Panel.jsx"), "panel").unwrap();
+        s.execute("file.runScript", json!({"name": "Panel.jsx"})).unwrap();
+        let (path, name) = (RecentScript::Path(tool.clone()), RecentScript::Name("Rename Layers.jsx".into()));
+        assert_eq!(s.prefs.recent_scripts, [name.clone(), path.clone()]);
+        let (e, _) = crate::menus::dynamic(&s, "recentScripts", &Default::default());
+        assert_eq!(e.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(), ["Rename Layers.jsx", "Tool.jsx"]);
+        assert_eq!((e[1].command.as_str(), &e[1].params), ("file.runScript", &json!({"recent": 1})));
+        // Running one again runs that file and moves it to the top.
+        assert_eq!(s.execute("file.runScript", json!({"recent": 1})).unwrap()["ran"], "tool");
+        assert_eq!(s.prefs.recent_scripts, [path.clone(), name.clone()]);
+        let sample = BUNDLED.iter().find(|b| b.0 == "Rename Layers.jsx").unwrap().3;
+        assert_eq!(s.execute("file.runScript", json!({"recent": 1})).unwrap()["ran"], sample);
+        assert!(bad_params(&s.execute("file.runScript", json!({"recent": 2}))));
+        assert!(bad_params(&s.execute("file.runScript", json!({"recent": "Tool.jsx"}))));
+        // A file named like a bundled script runs again as that file.
+        let local = root.join("Rename Layers.jsx");
+        std::fs::write(&local, "local").unwrap();
+        s.execute("file.runScript", json!({"path": local.to_string_lossy()})).unwrap();
+        assert_eq!(s.execute("file.runScript", json!({"recent": 0})).unwrap()["ran"], "local");
+        assert_eq!(s.execute("file.runScript", json!({"recent": 1})).unwrap()["ran"], sample);
+        // Ten at most, saved with the settings.
+        let mut last = String::new();
+        for i in 0..MAX_RECENT_SCRIPTS + 2 {
+            let f = root.join(format!("Step {i}.jsonl"));
+            std::fs::write(&f, "").unwrap();
+            last = f.to_string_lossy().into_owned();
+            s.execute("file.runScript", json!({"path": last})).unwrap();
+        }
+        assert_eq!(s.prefs.recent_scripts.len(), MAX_RECENT_SCRIPTS);
+        assert_eq!(s.prefs.recent_scripts[0], RecentScript::Path(last));
+        let saved = std::fs::read_to_string(root.join("settings").join(PREFS_FILE)).unwrap();
+        assert_eq!(Prefs::from_json(&saved).recent_scripts, s.prefs.recent_scripts);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn only_scripts_are_read_or_removed() {
         // A settings file in the Scripts folder that is not a script (.jsx / .js).

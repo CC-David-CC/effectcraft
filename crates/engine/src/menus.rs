@@ -72,7 +72,8 @@ fn holder_of(s: &Session, keys: &str) -> Option<String> {
 }
 
 /// The entries of a `@dynamic:<name>` node, and the disabled placeholder shown when there are
-/// none: `recentProjects`, `recentFootage`, `recentPresets`, `history` (undo steps, newest
+/// none: `recentProjects`, `recentFootage`, `recentPresets`, `recentScripts` (File ▸ Scripts ▸
+/// Recent Script Files), `history` (undo steps, newest
 /// first), `view3dShortcuts`, `workspaceShortcuts`, `savedWorkspaces` (Window ▸ Workspace) and
 /// `openViewers` (open compositions other than the active one), `scripts` (File ▸ Scripts) and
 /// `scriptPanels` (ScriptUI panels).
@@ -92,6 +93,10 @@ pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<
         "recentProjects" => (indexed(&s.prefs.recent_projects, "file.openRecent", false), Some("No Recent Projects")),
         "recentFootage" => (indexed(&s.prefs.recent_footage, "file.importRecent", false), Some("No Recent Footage")),
         "recentPresets" => (indexed(&s.prefs.recent_presets, "anim.applyRecentPreset", true), Some("No Recent Presets")),
+        "recentScripts" => (
+            s.prefs.recent_scripts.iter().enumerate().map(|(i, r)| dyn_entry(file_name(r.text()), "file.runScript", json!({"recent": i}))).collect(),
+            Some("No Recent Script Files"),
+        ),
         "history" => (
             s.history.undo.iter().rev().enumerate().map(|(i, (l, _))| dyn_entry(format!("Undo {l}"), "edit.history", json!({"steps": i + 1}))).collect(),
             Some("No History"),
@@ -576,6 +581,8 @@ File
     Install Script File... | file.installScript
     Install ScriptUI Panel... | file.installScriptUIPanel
     Run Script File... | file.runScript
+    Recent Script Files
+      @dynamic:recentScripts
   ---
   Create Proxy
     Still... | file.createProxy {"kind":"still"}

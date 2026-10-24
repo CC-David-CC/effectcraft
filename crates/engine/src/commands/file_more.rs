@@ -463,7 +463,8 @@ fn run_script(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("file.runScript", JSXBIN));
         }
         let bytes = s.services.read_file(path).map_err(|e| EngineError::Other(format!("cannot read {path}: {e}")))?;
-        remember_script(s, crate::prefs::RecentScript::Path(path.to_string()));
+        let full = s.services.full_path(path);
+        remember_script(s, crate::prefs::RecentScript::Path(full));
         let code = String::from_utf8_lossy(&bytes).to_string();
         let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
         let out = run_js(s, &code, path, false)?;
@@ -473,7 +474,8 @@ fn run_script(s: &mut Session, p: &Value) -> Result<Value> {
         (Some(Value::Array(a)), _) => a.clone(),
         (_, Some(path)) => {
             let bytes = s.services.read_file(path).map_err(|e| EngineError::Other(format!("cannot read {path}: {e}")))?;
-            remember_script(s, crate::prefs::RecentScript::Path(path.to_string()));
+            let full = s.services.full_path(path);
+            remember_script(s, crate::prefs::RecentScript::Path(full));
             let text = String::from_utf8_lossy(&bytes).to_string();
             match serde_json::from_str::<Value>(&text) {
                 Ok(Value::Array(a)) => a,

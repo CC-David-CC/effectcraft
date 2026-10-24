@@ -603,6 +603,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Reads relative paths from a working directory that a test can change.
+    struct InFolder(std::sync::Mutex<PathBuf>);
+
+    impl InFolder {
+        fn at(&self, path: &str) -> PathBuf {
+            self.0.lock().unwrap().join(path)
+        }
+    }
+
+    impl crate::Services for InFolder {
+        fn read_file(&self, path: &str) -> std::io::Result<Vec<u8>> {
+            std::fs::read(self.at(path))
+        }
+        fn write_file(&self, path: &str, data: &[u8]) -> std::io::Result<()> {
+            std::fs::write(self.at(path), data)
+        }
+        fn full_path(&self, path: &str) -> String {
+            self.at(path).to_string_lossy().into_owned()
+        }
+    }
+
+    /// A script run from a relative path runs the same file again from Recent Script Files after
+    /// the working directory changes, and two scripts with the same file name show their paths.
+    #[test]
+    fn recent_script_files_keep_the_file_that_ran() {
+        let (mut s, root) = session_in_tmp("recent-relative");
+        let (a, b) = (root.join("a"), root.join("b"));
+        for (dir, code) in [(&a, "a"), (&b, "b")] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("Tool.jsx"), code).unwrap();
+        }
+        let services = Arc::new(InFolder(std::sync::Mutex::new(a.clone())));
+        s.services = services.clone();
+        assert_eq!(s.execute("file.runScript", json!({"path": "Tool.jsx"})).unwrap()["ran"], "a");
+        *services.0.lock().unwrap() = b.clone();
+        assert_eq!(s.execute("file.runScript", json!({"recent": 0})).unwrap()["ran"], "a");
+        let (e, _) = crate::menus::dynamic(&s, "recentScripts", &Default::default());
+        assert_eq!(e.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(), ["Tool.jsx"]);
+        assert_eq!(s.execute("file.runScript", json!({"path": "Tool.jsx"})).unwrap()["ran"], "b");
+        let (e, _) = crate::menus::dynamic(&s, "recentScripts", &Default::default());
+        let (a, b) = (a.join("Tool.jsx").to_string_lossy().into_owned(), b.join("Tool.jsx").to_string_lossy().into_owned());
+        assert_eq!(e.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(), [b.as_str(), a.as_str()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Native script paths are kept absolute.
+    #[test]
+    fn native_full_paths_are_absolute() {
+        use crate::Services;
+        assert!(std::path::Path::new(&crate::FsServices.full_path("Tool.jsx")).is_absolute());
+    }
+
     #[test]
     fn only_scripts_are_read_or_removed() {
         // A settings file in the Scripts folder that is not a script (.jsx / .js).

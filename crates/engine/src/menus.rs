@@ -61,6 +61,12 @@ fn file_name(p: &str) -> String {
     std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string())
 }
 
+/// The labels of a recent-files list: `names[i]`, or the whole of `full[i]` when another entry
+/// has the same name, so entries for two files named `Tool.jsx` tell them apart.
+fn distinct_labels(names: Vec<String>, full: &[String]) -> Vec<String> {
+    names.iter().zip(full).map(|(n, f)| if names.iter().filter(|m| *m == n).count() > 1 { f.clone() } else { n.clone() }).collect()
+}
+
 fn dyn_entry(label: String, command: &str, params: Value) -> MenuEntry {
     MenuEntry { label, command: command.into(), params, shortcut: None, alt_shortcuts: vec![] }
 }
@@ -80,23 +86,26 @@ fn holder_of(s: &Session, keys: &str) -> Option<String> {
 pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<&'static str>) {
     use serde_json::json;
     let indexed = |list: &[String], cmd: &str, stem: bool| -> Vec<MenuEntry> {
-        list.iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let n =
-                    if stem { std::path::Path::new(p).file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.clone()) } else { file_name(p) };
-                dyn_entry(n, cmd, json!({"index": i}))
-            })
-            .collect()
+        let names = list
+            .iter()
+            .map(
+                |p| if stem { std::path::Path::new(p).file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.clone()) } else { file_name(p) },
+            )
+            .collect();
+        distinct_labels(names, list).into_iter().enumerate().map(|(i, n)| dyn_entry(n, cmd, json!({"index": i}))).collect()
     };
     match name {
         "recentProjects" => (indexed(&s.prefs.recent_projects, "file.openRecent", false), Some("No Recent Projects")),
         "recentFootage" => (indexed(&s.prefs.recent_footage, "file.importRecent", false), Some("No Recent Footage")),
         "recentPresets" => (indexed(&s.prefs.recent_presets, "anim.applyRecentPreset", true), Some("No Recent Presets")),
-        "recentScripts" => (
-            s.prefs.recent_scripts.iter().enumerate().map(|(i, r)| dyn_entry(file_name(r.text()), "file.runScript", json!({"recent": i}))).collect(),
-            Some("No Recent Script Files"),
-        ),
+        "recentScripts" => {
+            let full: Vec<String> = s.prefs.recent_scripts.iter().map(|r| r.text().to_string()).collect();
+            let names = full.iter().map(|p| file_name(p)).collect();
+            (
+                distinct_labels(names, &full).into_iter().enumerate().map(|(i, n)| dyn_entry(n, "file.runScript", json!({"recent": i}))).collect(),
+                Some("No Recent Script Files"),
+            )
+        }
         "history" => (
             s.history.undo.iter().rev().enumerate().map(|(i, (l, _))| dyn_entry(format!("Undo {l}"), "edit.history", json!({"steps": i + 1}))).collect(),
             Some("No History"),

@@ -1668,7 +1668,6 @@ impl EffectcraftApp {
         self.run_script_tasks(&ctx);
         self.apply_prefs(&ctx);
         self.handle_events(&ctx);
-        panels::unsaved::close_or_quit(self, &ctx);
         let title = panels::unsaved::window_title(self);
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1913,14 +1912,20 @@ impl eframe::App for EffectcraftApp {
         }
         self.issue_screenshots(ctx);
         self.collect_screenshots(ctx);
+        // eframe runs `logic` without `ui` while the window is minimized or hidden, and handles a
+        // close then too, so the close decision is made here, with the platform hook last.
+        if self.gpu_failure_applied == Some(true) {
+            self.close_after_device_loss(ctx);
+            // On macOS the app quits through `-[NSApplication terminate:]` instead of closing the
+            // window while AppKit's run loop is running (#341).
+            craft_quit::on_close_request(ctx);
+        } else {
+            panels::unsaved::close_or_quit(self, ctx);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if self.gpu_failure_applied == Some(true) {
-            self.close_after_device_loss(ui.ctx());
-            // On macOS the app quits through `-[NSApplication terminate:]` instead of closing the
-            // window while AppKit's run loop is running (#341).
-            craft_quit::on_close_request(ui.ctx());
             return;
         }
         self.init_gpu(frame);

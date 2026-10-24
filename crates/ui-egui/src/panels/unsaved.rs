@@ -391,4 +391,19 @@ mod tests {
         let macos = cfg!(target_os = "macos");
         assert_eq!(close_frame(&mut app, &ctx), (macos, macos), "Don't Save quits");
     }
+
+    /// While the window is minimized or hidden, eframe runs `App::logic` without `App::ui` and
+    /// still handles a close: `logic` asks about a modified project.
+    #[test]
+    fn a_close_while_only_logic_runs_asks_about_a_modified_project() {
+        let (mut app, ctx) = app();
+        modified(&mut app);
+        let mut raw = egui::RawInput::default();
+        raw.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+        let mut frame = eframe::Frame::_new_kittest();
+        let out = ctx.run_logic(&raw, |ctx| eframe::App::logic(&mut app, ctx, &mut frame));
+        let canceled = out.viewport_commands.get(&egui::ViewportId::ROOT).is_some_and(|c| c.contains(&egui::ViewportCommand::CancelClose));
+        assert!(canceled, "the close is canceled");
+        assert_eq!(app.dialog, Some(Dialog::UnsavedChanges));
+    }
 }

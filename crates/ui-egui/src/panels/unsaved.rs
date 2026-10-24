@@ -406,4 +406,22 @@ mod tests {
         assert!(canceled, "the close is canceled");
         assert_eq!(app.dialog, Some(Dialog::UnsavedChanges));
     }
+
+    /// A file dialog answered in the frame that closes the window runs its command before the
+    /// close decision, so a change it makes is asked about.
+    #[test]
+    fn a_dialog_answer_runs_before_the_close_decision() {
+        let (mut app, ctx) = app();
+        assert!(!app.session.is_dirty());
+        let answer = crate::DialogAnswer { command: "comp.new".into(), key: "name", params: json!({"width": 64, "height": 64}), paths: vec!["Main".into()] };
+        app.dialog_answers.0.send(answer).unwrap();
+        let mut raw = egui::RawInput::default();
+        raw.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+        let mut frame = eframe::Frame::_new_kittest();
+        let out = ctx.run_logic(&raw, |ctx| eframe::App::logic(&mut app, ctx, &mut frame));
+        let canceled = out.viewport_commands.get(&egui::ViewportId::ROOT).is_some_and(|c| c.contains(&egui::ViewportCommand::CancelClose));
+        assert!(app.session.is_dirty(), "the answer ran");
+        assert!(canceled, "the close is canceled");
+        assert_eq!(app.dialog, Some(Dialog::UnsavedChanges));
+    }
 }

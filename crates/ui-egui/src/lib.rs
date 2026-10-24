@@ -1623,7 +1623,6 @@ impl EffectcraftApp {
     fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.apply_gpu_failure(&ctx);
-        self.run_dialog_answers();
         self.auto.begin_frame();
         self.frames.set_context(&ctx);
         if self.session.render_job.is_some() {
@@ -1920,6 +1919,8 @@ impl eframe::App for EffectcraftApp {
             // window while AppKit's run loop is running (#341).
             craft_quit::on_close_request(ctx);
         } else {
+            // An answered file dialog can change the project, so it runs before the close decision.
+            self.run_dialog_answers();
             panels::unsaved::close_or_quit(self, ctx);
         }
     }

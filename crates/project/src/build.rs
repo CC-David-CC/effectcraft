@@ -615,17 +615,21 @@ fn wiggle_spatial_phase(ids: &mut Ids) -> Property {
 
 /// Adds the properties that shape path operations have gained since a project was saved (Wiggle
 /// Paths' Spatial Phase), at their defaults, to the operations in `contents` and its nested
-/// groups. Returns whether anything was added.
+/// groups. Returns whether anything was added. It walks the nested groups with a work list and
+/// does not recurse.
 pub fn upgrade_shape_contents(ids: &mut Ids, contents: &mut PropGroup) -> bool {
     let mut changed = false;
-    for n in &mut contents.children {
-        let Node::Group(g) = n else { continue };
-        if g.match_id == "wiggle" && !g.children.iter().any(|c| c.match_id() == "spatialPhase") {
-            let at = g.children.iter().position(|c| c.match_id() == "phase").map_or(g.children.len(), |i| i + 1);
-            g.children.insert(at, wiggle_spatial_phase(ids).into());
-            changed = true;
+    let mut todo = vec![contents];
+    while let Some(group) = todo.pop() {
+        for n in &mut group.children {
+            let Node::Group(g) = n else { continue };
+            if g.match_id == "wiggle" && !g.children.iter().any(|c| c.match_id() == "spatialPhase") {
+                let at = g.children.iter().position(|c| c.match_id() == "phase").map_or(g.children.len(), |i| i + 1);
+                g.children.insert(at, wiggle_spatial_phase(ids).into());
+                changed = true;
+            }
+            todo.push(g);
         }
-        changed |= upgrade_shape_contents(ids, g);
     }
     changed
 }

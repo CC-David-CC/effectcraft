@@ -384,6 +384,12 @@ pub struct GpuContext {
     pub(crate) particle_states: crate::particles::StatesCell,
     /// Deferred readbacks (a browser worker's WebGPU device), see [`crate::deferred`].
     pub(crate) deferred: Option<Arc<crate::deferred::Deferred>>,
+    /// The adapter is a software rasteriser (llvmpipe, WARP): its float maths follows the
+    /// CPU's exactly, so the YUV tests hold it to exact parity.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) software: bool,
+    /// Export frame → YUV 4:2:0 kernel (built on first use).
+    pub(crate) yuv: std::sync::OnceLock<Result<crate::yuv::YuvPipe, String>>,
     readbacks: Arc<crate::readback::Readbacks>,
 }
 
@@ -437,7 +443,7 @@ pub(crate) fn init_resource<T>(device: &wgpu::Device, label: &str, create: impl 
 /// Browser scope completion is asynchronous. Preserve the existing browser constructor;
 /// never block its event loop or introduce a guard across an asynchronous boundary here.
 #[cfg(target_arch = "wasm32")]
-fn init_resource<T>(_device: &wgpu::Device, _label: &str, create: impl FnOnce() -> T) -> Result<T, String> {
+pub(crate) fn init_resource<T>(_device: &wgpu::Device, _label: &str, create: impl FnOnce() -> T) -> Result<T, String> {
     Ok(create())
 }
 
@@ -731,6 +737,8 @@ impl GpuContext {
             transfers: Default::default(),
             zeros: Default::default(),
             adv3d: std::sync::OnceLock::new(),
+            yuv: std::sync::OnceLock::new(),
+            software: info.device_type == wgpu::DeviceType::Cpu,
             adv3d_raster: adv3d_unsupported.is_none(),
             particles: Default::default(),
             particle_states: Default::default(),
@@ -744,6 +752,18 @@ impl GpuContext {
     /// Shared-device hosts must forward their device failures through the notifier.
     pub fn check_health(&self) -> Result<(), String> {
         self.readbacks.check()
+    }
+
+    /// Export frame → YUV 4:2:0 kernel, initialized once and `None` when shader or pipeline creation fails.
+    pub(crate) fn yuv_pipe(&self) -> Option<&crate::yuv::YuvPipe> {
+        self.yuv
+            .get_or_init(|| {
+                crate::yuv::YuvPipe::new(&self.device).inspect_err(|e| {
+                    log::warn!(target: "effectcraft_gpu", "yuv420 kernel unavailable: {e}");
+                })
+            })
+            .as_ref()
+            .ok()
     }
 
     /// A notification hook for the owner of a shared device's error/loss handlers.

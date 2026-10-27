@@ -162,6 +162,10 @@ pub struct Session {
     pub journal: Vec<(String, Value)>,
     /// Processed-layer pixels reused across frames and edits (content-keyed, never stale).
     pub layer_cache: Arc<LayerCache>,
+    /// The last Cryptomatte pick probe (see [`Session::crypto_probe_job`]). Public only so that
+    /// other crates can build a `Session { .. }`; its type is crate-private.
+    #[doc(hidden)]
+    pub crypto_probe: Arc<std::sync::Mutex<commands::CryptoProbeSlot>>,
     /// The persistent disk cache (Settings ▸ Media & Disk Cache), when enabled.
     pub disk_cache: Option<Arc<effectcraft_render::disk_cache::DiskCache>>,
     /// Settings (Preferences).
@@ -310,6 +314,7 @@ impl Default for Session {
             events: vec![],
             journal: vec![],
             layer_cache: Arc::new(LayerCache::default()),
+            crypto_probe: Default::default(),
             disk_cache: None,
             prefs: prefs::Prefs::default(),
             prefs_revision: 0,

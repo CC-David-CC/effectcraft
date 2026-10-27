@@ -91,6 +91,8 @@ impl Session {
 
     pub fn bump(&mut self) {
         self.revision += 1;
+        // A Cryptomatte probe is keyed by the revision: an older one never answers again.
+        self.drop_crypto_probe();
         // Back at the saved state (undo, redo, a history jump or a rolled-back batch).
         if Arc::ptr_eq(&self.project, &self.saved_project) {
             self.saved_revision = self.revision;
@@ -166,12 +168,14 @@ impl Session {
     pub fn undo(&mut self) -> bool {
         let Some((label, p)) = self.history.undo.pop() else { return false };
         let edited = commands::text_edit::active_editor_snapshot(self);
+        let probe = commands::kept_crypto_probe(self);
         let cur = std::mem::replace(&mut self.project, p);
         self.keep_view_settings(&cur);
-        self.history.redo.push((label, cur));
         self.history.merge_key = None;
         self.sanitize_after_replacement(edited.as_ref());
         self.bump();
+        commands::keep_crypto_probe(self, probe, &cur);
+        self.history.redo.push((label, cur));
         true
     }
 
@@ -182,12 +186,14 @@ impl Session {
     pub fn redo(&mut self) -> bool {
         let Some((label, p)) = self.history.redo.pop() else { return false };
         let edited = commands::text_edit::active_editor_snapshot(self);
+        let probe = commands::kept_crypto_probe(self);
         let cur = std::mem::replace(&mut self.project, p);
         self.keep_view_settings(&cur);
-        self.history.undo.push((label, cur));
         self.history.merge_key = None;
         self.sanitize_after_replacement(edited.as_ref());
         self.bump();
+        commands::keep_crypto_probe(self, probe, &cur);
+        self.history.undo.push((label, cur));
         true
     }
 

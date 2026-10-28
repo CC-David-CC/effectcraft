@@ -1,4 +1,6 @@
-use super::*;
+use serde::{Deserialize, Serialize};
+
+use super::Prefs;
 
 impl Prefs {
     /// Remember a project in File ▸ Open Recent.

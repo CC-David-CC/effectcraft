@@ -171,10 +171,15 @@ pub fn memory() -> Option<SysMemory> {
 pub fn parse_df(text: &str) -> Option<(u64, u64)> {
     let line = text.lines().skip(1).find(|l| !l.trim().is_empty())?;
     let f: Vec<&str> = line.split_whitespace().collect();
+    // A full disk into its root-reserved blocks reports negative numbers (Linux): none free.
+    let num = |v: &str| match v.strip_prefix('-') {
+        Some(d) => d.parse::<u64>().ok().map(|_| 0),
+        None => v.parse::<u64>().ok(),
+    };
     // Size, used, available and capacity follow the device name (which may contain spaces).
     let i = (0..f.len().saturating_sub(3))
-        .find(|&i| f.get(i + 3).is_some_and(|c| c.ends_with('%')) && f.get(i..i + 3).is_some_and(|n| n.iter().all(|v| v.parse::<u64>().is_ok())))?;
-    let kb = |j: usize| f.get(j)?.parse::<u64>().ok().map(|v| v.saturating_mul(1024));
+        .find(|&i| f.get(i + 3).is_some_and(|c| c.ends_with('%')) && f.get(i..i + 3).is_some_and(|n| n.iter().all(|v| num(v).is_some())))?;
+    let kb = |j: usize| f.get(j).and_then(|v| num(v)).map(|v| v.saturating_mul(1024));
     Some((kb(i)?, kb(i + 2)?))
 }
 
@@ -317,6 +322,9 @@ mod tests {
         assert_eq!(parse_df(mac), Some((0, 0)));
         let spaced = "Filesystem 1024-blocks Used Available Capacity Mounted on\n//nas/My Share 1000 400 600 40% /Volumes/My Share\n";
         assert_eq!(parse_df(spaced), Some((1000 * 1024, 600 * 1024)));
+        // A full disk into its reserved blocks: nothing available.
+        let full = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda2 1000 1010 -10 101% /\n";
+        assert_eq!(parse_df(full), Some((1000 * 1024, 0)));
         assert_eq!(parse_df("Filesystem 1024-blocks\n"), None);
         assert_eq!(parse_df(""), None);
     }

@@ -56,9 +56,8 @@ impl<T: Copy + Send + 'static> Watch<T> {
         }
         let (latest, busy) = (self.latest.clone(), self.busy.clone());
         let read = move || {
-            if let Some(m) = read() {
-                *latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(m);
-            }
+            // A failed reading clears the last one: a stale value is worse than none.
+            *latest.lock().unwrap_or_else(PoisonError::into_inner) = read();
             busy.store(false, Ordering::Release);
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -72,7 +71,7 @@ impl<T: Copy + Send + 'static> Watch<T> {
         }
     }
 
-    /// The last reading (`None` until one finished).
+    /// The last reading (`None` until one finished or when the last one failed).
     pub fn latest(&self) -> Option<T> {
         *self.latest.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -286,6 +285,26 @@ mod tests {
         // Available never exceeds total, even with nonsense counts.
         let m = parse_freebsd_sysctl("1000\n4096\n999999999\n999999999").expect("parses");
         assert_eq!(m.available, 1000);
+    }
+
+    #[test]
+    fn a_failed_reading_clears_the_last_one() {
+        let w = Watch::<u64>::default();
+        let wait = || {
+            for _ in 0..500 {
+                if !w.busy.load(Ordering::Acquire) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            panic!("the reading never finished");
+        };
+        w.poll_with("ec-test", || Some(7));
+        wait();
+        assert_eq!(w.latest(), Some(7));
+        w.poll_with("ec-test", || None);
+        wait();
+        assert_eq!(w.latest(), None);
     }
 
     #[test]

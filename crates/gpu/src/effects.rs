@@ -251,7 +251,13 @@ pub(crate) fn box_passes(e: &mut Enc, img: &GpuImage, rx: &[usize], ry: &[usize]
         let mut p = Params::default();
         p.u[0] = [r as u32, repeat as u32, block, 0];
         let out = e.scratch(cur.width, cur.height);
-        e.dispatch(if vertical { "box_v" } else { "box_h" }, &p, &cur, None, &out, None, (lines.div_ceil(64), n.div_ceil(block)));
+        e.dispatch(
+            if vertical { "box_v" } else { "box_h" },
+            &p,
+            crate::context::KernelImages { src: &cur, aux: None, out: &out },
+            None,
+            (lines.div_ceil(64), n.div_ceil(block)),
+        );
         cur = out;
     }
     cur
@@ -406,7 +412,7 @@ fn transform(e: &mut Enc, ctx: &EffectCtx, mut b: GBuf) -> Option<GBuf> {
     let m = effectcraft_effects::transform_matrix_px(ctx.params, |p| b.to_px(p));
     let sampling = if ctx.params.e("sampling") == 1 { Sampling::Bicubic } else { Sampling::Bilinear };
     let empty = e.image(b.img.width, b.img.height);
-    b.img = ops::warp(e, &empty, &b.img, &m, sampling, effectcraft_color::BlendMode::Normal, opacity, 0, None);
+    b.img = ops::warp(e, &empty, &b.img, &m, ops::WarpOptions { sampling, mode: effectcraft_color::BlendMode::Normal, opacity, seed: 0 }, None);
     Some(b)
 }
 

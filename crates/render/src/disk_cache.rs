@@ -547,6 +547,8 @@ impl DiskCache {
         if data.len() as u64 > self.limit_bytes() {
             return;
         }
+        // Make room first, so the cache never exceeds its limit (or the free-space reserve).
+        self.evict_to(self.limit_bytes().saturating_sub(data.len() as u64));
         let n = self.tmp_counter.fetch_add(1, Ordering::Relaxed);
         let tmp = parent.join(format!("{key:032x}.tmp.{}.{n}", std::process::id()));
         if let Err(e) = std::fs::write(&tmp, &data).and_then(|()| std::fs::rename(&tmp, &path)) {
@@ -558,7 +560,6 @@ impl DiskCache {
         if let Ok(mut g) = self.index.lock() {
             g.insert(kind, key, data.len() as u64);
         }
-        self.evict();
     }
 
     /// Count a failed write; the first one is logged (a full disk shouldn't go unnoticed).
@@ -570,7 +571,11 @@ impl DiskCache {
 
     /// Remove least recently used entries until the cache fits its limit.
     fn evict(&self) {
-        let max = self.limit_bytes();
+        self.evict_to(self.limit_bytes());
+    }
+
+    /// Remove least recently used entries until the cache fits `max` bytes.
+    fn evict_to(&self, max: u64) {
         let victims = match self.index.lock() {
             Ok(mut g) => g.evict(max),
             Err(_) => return,
@@ -1134,7 +1139,7 @@ mod tests {
         assert_eq!((st.max_bytes, st.limit_bytes), (1 << 30, used));
         dc.put_layer_now(9, &buf(9, 64, 64));
         let st = dc.stats();
-        assert!(st.bytes <= used - used / 10 && st.evictions > 0, "{st:?}");
+        assert!(st.bytes <= st.limit_bytes && st.bytes <= used - used / 10 && st.evictions > 0, "{st:?}");
         assert!(dc.contains(Kind::Layer, 9), "the new entry is the most recently used");
         // Below the reserve the cache gives its space back, and skips writes that can't fit.
         dc.set_disk_space(Some((100 << 30, 4 << 30)));

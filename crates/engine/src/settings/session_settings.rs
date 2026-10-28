@@ -119,6 +119,7 @@ impl Session {
         // (no file system in the browser: the disk cache stays off there)
         let Some(folder) = folder.filter(|_| d.disk_cache_enabled && !cfg!(target_arch = "wasm32")) else {
             self.disk_cache = None;
+            self.disk_watch = Default::default();
             self.layer_cache.set_disk(None);
             return;
         };
@@ -132,11 +133,17 @@ impl Session {
                 c.set_max_bytes(max);
                 c.clone()
             }
+            // A new folder: the free-space reading was for the old one (a reader still running
+            // holds the old watcher's state, so it can't write into the new one).
             _ => match DiskCache::open(&folder, max) {
-                Ok(c) => c,
+                Ok(c) => {
+                    self.disk_watch = Default::default();
+                    c
+                }
                 Err(e) => {
                     log::warn!("disk cache at {}: {e}", folder.display());
                     self.disk_cache = None;
+                    self.disk_watch = Default::default();
                     self.layer_cache.set_disk(None);
                     return;
                 }

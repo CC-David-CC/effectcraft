@@ -82,7 +82,13 @@ impl Session {
     /// Take the latest reading of the system's memory and start the next one in the background
     /// (desktop frontends call this every few seconds; it never waits for the system), then
     /// re-apply the cache budgets when the reading changes them. Returns the effective budgets.
+    /// The disk cache's free disk space is read the same way (it keeps a reserve free).
     pub fn memory_tick(&mut self) -> crate::prefs::CacheBudgets {
+        if let Some(dc) = &self.disk_cache {
+            dc.set_disk_space(self.disk_watch.latest());
+            let folder = dc.folder().to_path_buf();
+            self.disk_watch.poll_with("ec-disk-space", move || crate::sysinfo::disk_space(&folder));
+        }
         let before = self.prefs.cache_budgets(self.sys_memory);
         self.sys_memory = self.memory_watch.latest().or(self.sys_memory);
         self.memory_watch.poll();

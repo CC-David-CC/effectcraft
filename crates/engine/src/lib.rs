@@ -202,6 +202,8 @@ pub struct Session {
     pub key_move: Option<KeyMove>,
     /// Reads the system's memory in the background for [`Session::memory_tick`].
     pub memory_watch: sysinfo::MemoryWatch,
+    /// Reads the disk cache's free disk space in the background for [`Session::memory_tick`].
+    pub disk_watch: sysinfo::DiskWatch,
     /// Switches Affect Nested Comps as last applied (a change empties the layer cache).
     pub applied_nested_switches: Option<bool>,
     /// Runs renders and analyses off the UI thread where there are no threads (the web app's
@@ -327,6 +329,7 @@ impl Default for Session {
             sys_memory: None,
             key_move: None,
             memory_watch: Default::default(),
+            disk_watch: Default::default(),
             applied_nested_switches: None,
             offload: None,
             offloaded: vec![],

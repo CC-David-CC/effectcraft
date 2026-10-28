@@ -396,12 +396,14 @@ impl DiskCache {
     /// 2 GB or 5% of the disk free, whichever is more (evicting when it must).
     pub fn set_disk_space(&self, space: Option<(u64, u64)>) {
         let cap = match space {
-            Some((total, available)) => {
+            // (a disk reported as 0 bytes, such as an automount map, is unknown)
+            Some((total, available)) if total > 0 => {
                 let reserve = (2u64 << 30).max(total / 20);
                 let used = self.index.lock().map(|g| g.total()).unwrap_or_default();
-                used.saturating_add(available.saturating_sub(reserve))
+                // The cache's own files count as free: below the reserve it gives space back.
+                used.saturating_add(available).saturating_sub(reserve)
             }
-            None => u64::MAX,
+            _ => u64::MAX,
         };
         self.disk_cap.store(cap, Ordering::Relaxed);
         let limited = cap < self.max_bytes();
@@ -541,6 +543,10 @@ impl DiskCache {
             return;
         }
         let data = seal(kind, payload);
+        // An entry that cannot fit would be evicted straight away.
+        if data.len() as u64 > self.limit_bytes() {
+            return;
+        }
         let n = self.tmp_counter.fetch_add(1, Ordering::Relaxed);
         let tmp = parent.join(format!("{key:032x}.tmp.{}.{n}", std::process::id()));
         if let Err(e) = std::fs::write(&tmp, &data).and_then(|()| std::fs::rename(&tmp, &path)) {
@@ -1119,14 +1125,22 @@ mod tests {
         // Unknown space: the setting alone.
         dc.set_disk_space(None);
         assert_eq!(dc.stats().limit_bytes, 1 << 30);
-        // 100 GB disk, 5 GB reserved, 1 GB free: the cache may not grow.
-        dc.set_disk_space(Some((100 << 30, 1 << 30)));
+        // A disk reported as 0 bytes is unknown.
+        dc.set_disk_space(Some((0, 0)));
+        assert_eq!(dc.stats().limit_bytes, 1 << 30);
+        // 100 GB disk, 5 GB reserved, exactly 5 GB free: the cache may not grow.
+        dc.set_disk_space(Some((100 << 30, 5 << 30)));
         let st = dc.stats();
         assert_eq!((st.max_bytes, st.limit_bytes), (1 << 30, used));
         dc.put_layer_now(9, &buf(9, 64, 64));
         let st = dc.stats();
         assert!(st.bytes <= used - used / 10 && st.evictions > 0, "{st:?}");
         assert!(dc.contains(Kind::Layer, 9), "the new entry is the most recently used");
+        // Below the reserve the cache gives its space back, and skips writes that can't fit.
+        dc.set_disk_space(Some((100 << 30, 4 << 30)));
+        dc.put_layer_now(10, &buf(10, 64, 64));
+        let st = dc.stats();
+        assert_eq!((st.limit_bytes, st.entries, st.bytes), (0, 0, 0), "{st:?}");
         // Plenty of space again: back to the setting.
         dc.set_disk_space(Some((100 << 30, 50 << 30)));
         assert_eq!(dc.stats().limit_bytes, 1 << 30);

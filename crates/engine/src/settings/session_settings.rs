@@ -84,11 +84,7 @@ impl Session {
     /// re-apply the cache budgets when the reading changes them. Returns the effective budgets.
     /// The disk cache's free disk space is read the same way (it keeps a reserve free).
     pub fn memory_tick(&mut self) -> crate::prefs::CacheBudgets {
-        if let Some(dc) = &self.disk_cache {
-            dc.set_disk_space(self.disk_watch.latest());
-            let folder = dc.folder().to_path_buf();
-            self.disk_watch.poll_with("ec-disk-space", move || crate::sysinfo::disk_space(&folder));
-        }
+        self.poll_disk_space();
         let before = self.prefs.cache_budgets(self.sys_memory);
         self.sys_memory = self.memory_watch.latest().or(self.sys_memory);
         self.memory_watch.poll();
@@ -102,6 +98,19 @@ impl Session {
             }
         }
         after
+    }
+
+    /// Read the disk cache's free disk space in the background and apply it there (the reserve
+    /// it keeps free): the free space and the cache's size are taken at the same moment, and the
+    /// reader holds its own cache, so a reading never reaches another folder's.
+    fn poll_disk_space(&mut self) {
+        if let Some(dc) = &self.disk_cache {
+            let dc = dc.clone();
+            self.disk_watch.poll_with("ec-disk-space", move || {
+                dc.set_disk_space(crate::sysinfo::disk_space(dc.folder()));
+                Some(())
+            });
+        }
     }
 
     /// Apply Settings ▸ Media & Disk Cache ▸ Disk Cache: open (or close) the persistent cache
@@ -150,6 +159,8 @@ impl Session {
             },
         };
         self.disk_cache = Some(dc.clone());
+        // The reserve applies from the start (a new folder's watcher is idle).
+        self.poll_disk_space();
         let salt = self.refresh_disk_salt(true).unwrap_or_default();
         self.layer_cache.set_disk(Some((dc.clone(), salt)));
         // Roto Brush / Object Matte segmentations persist there too (held weakly: switching the

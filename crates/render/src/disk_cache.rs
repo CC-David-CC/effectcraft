@@ -320,10 +320,12 @@ impl DiskCache {
             dropped: AtomicU64::new(0),
             failed: AtomicU64::new(0),
             tmp_counter: AtomicU64::new(0),
-            queue: Arc::new((Mutex::new(Queue { jobs: Default::default(), busy: false }), Condvar::new())),
+            queue: Arc::new((Mutex::new(Queue { jobs: Default::default(), busy: cfg!(not(target_arch = "wasm32")) }), Condvar::new())),
             min_layer_ms: AtomicU64::new(30),
         });
         dc.rescan();
+        // Shrinking a large cache deletes many files: the writer thread does it.
+        #[cfg(target_arch = "wasm32")]
         dc.evict();
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -644,6 +646,15 @@ impl DiskCache {
 #[cfg(not(target_arch = "wasm32"))]
 fn writer(dc: std::sync::Weak<DiskCache>, q: Arc<(Mutex<Queue>, Condvar)>) {
     let (m, cv) = &*q;
+    // The eviction at open (a lower limit than the folder holds), off the opening thread;
+    // `busy` starts set, so `flush` waits for it.
+    if let Some(cache) = dc.upgrade() {
+        cache.evict();
+    }
+    if let Ok(mut g) = m.lock() {
+        g.busy = false;
+    }
+    cv.notify_all();
     loop {
         let job = {
             let Ok(mut g) = m.lock() else { return };

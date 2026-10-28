@@ -44,8 +44,9 @@ impl<T> Default for Watch<T> {
 
 /// The system's memory ([`memory`]).
 pub type MemoryWatch = Watch<SysMemory>;
-/// The disk cache's disk: `(total, available)` bytes ([`disk_space`]).
-pub type DiskWatch = Watch<(u64, u64)>;
+/// The disk cache's free-space reading ([`disk_space`]): the reader applies it to its cache
+/// itself, so only the busy guard is used.
+pub type DiskWatch = Watch<()>;
 
 impl<T: Copy + Send + 'static> Watch<T> {
     /// Start a new reading in the background on a thread called `name` (no threads on the web:

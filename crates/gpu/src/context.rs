@@ -984,6 +984,8 @@ impl GpuContext {
             particle_states: Default::default(),
             deferred: self.deferred.clone(),
             readbacks: self.readbacks.clone(),
+            software: self.software,
+            yuv: std::sync::OnceLock::new(),
         }
     }
 

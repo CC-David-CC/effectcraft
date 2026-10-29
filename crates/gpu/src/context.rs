@@ -30,7 +30,8 @@ const ENTRIES: &[&str] = &[
 const EFFECT_ENTRIES: &[&str] = &["box_h", "box_v", "directional", "glow_bright", "glow_combine", "shadow_make", "shadow_combine", "pointwise"];
 
 /// Entry points that also bind group 1 (four read-only storage buffers; see
-/// [`Enc::dispatch_ext`]).
+/// [`Enc::dispatch_ext`]). Like the effect kernels, one that fails to build (FXC on DirectX 12
+/// can't unroll `classic3d`'s loops, #613) leaves its work to the CPU.
 const EXT_ENTRIES: &[&str] = &["classic3d"];
 
 /// Pixel format of every working texture: premultiplied RGBA, 32-bit float (32 bpc headroom;
@@ -622,15 +623,21 @@ impl GpuContext {
             })
         };
         // The compositor's own kernels are required; an effect kernel that doesn't build is
-        // left out, and its effects render on the CPU (see `Enc::take_missing`).
-        let mut pipelines = ENTRIES
-            .iter()
-            .chain(crate::adv3d::SKY_KERNELS)
-            .map(|e| (e, &layout))
-            .chain(EXT_ENTRIES.iter().map(|e| (e, &layout_ext)))
-            .map(|(e, layout)| Ok((*e, build(e, layout)?)))
-            .collect::<Result<HashMap<_, _>, String>>()?;
+        // left out, and its effects render on the CPU (see `Enc::take_missing`). So is a
+        // missing Classic 3D kernel: its 3D runs render on the CPU.
+        let mut pipelines = ENTRIES.iter().chain(crate::adv3d::SKY_KERNELS).map(|e| Ok((*e, build(e, &layout)?))).collect::<Result<HashMap<_, _>, String>>()?;
         let mut unavailable = vec![];
+        for e in EXT_ENTRIES {
+            match build(e, &layout_ext) {
+                Ok(p) => {
+                    pipelines.insert(*e, p);
+                }
+                Err(why) => {
+                    log::warn!("gpu {name}: kernel {e} unavailable, its 3D layers render on the CPU: {why}");
+                    unavailable.push((*e, why));
+                }
+            }
+        }
         for e in EFFECT_ENTRIES
             .iter()
             .chain(crate::fx_color::KERNELS)
@@ -927,11 +934,59 @@ impl GpuContext {
         &self.unavailable
     }
 
+    /// Whether kernel `entry` was built (an effect or Classic 3D kernel can be missing, #613).
+    pub(crate) fn has_kernel(&self, entry: &str) -> bool {
+        self.pipelines.contains_key(entry)
+    }
+
     /// Leave kernel `entry` out, as if it had failed to build (tests of the CPU fallback).
     #[cfg(test)]
     pub(crate) fn drop_kernel(&mut self, entry: &'static str) {
         self.pipelines.remove(entry);
         self.unavailable.push((entry, "dropped by a test".into()));
+    }
+
+    /// A copy of this context sharing the same [`wgpu::Device`] and [`wgpu::Queue`] with
+    /// kernel `entry` left out, as if it had failed to build (tests of the CPU fallback
+    /// without opening a second device on `llvmpipe`).
+    #[cfg(test)]
+    pub(crate) fn without_kernel(&self, entry: &'static str) -> GpuContext {
+        let mut pipelines = self.pipelines.clone();
+        pipelines.remove(entry);
+        let mut unavailable = self.unavailable.clone();
+        unavailable.push((entry, "dropped by a test".into()));
+        GpuContext {
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            name: self.name.clone(),
+            max_dim: self.max_dim,
+            median_kernel: self.median_kernel,
+            bgl: self.bgl.clone(),
+            bgl_ext: self.bgl_ext.clone(),
+            pipelines,
+            unavailable,
+            display_bgl: self.display_bgl.clone(),
+            display: self.display.clone(),
+            display_mip: self.display_mip.clone(),
+            dummy_tex: self.dummy_tex.clone(),
+            dummy: self.dummy.clone(),
+            dummy_buf: self.dummy_buf.clone(),
+            uploads: Mutex::new(Uploads::default()),
+            upload_budget: std::sync::atomic::AtomicUsize::new(UPLOAD_BUDGET),
+            upload_full_warned: Default::default(),
+            pool: self.pool.clone(),
+            staging: Default::default(),
+            transfers: Default::default(),
+            zeros: Default::default(),
+            adv3d: std::sync::OnceLock::new(),
+            adv3d_raster: self.adv3d_raster,
+            particles: Default::default(),
+            particle_states: Default::default(),
+            deferred: self.deferred.clone(),
+            readbacks: self.readbacks.clone(),
+            software: self.software,
+            yuv: std::sync::OnceLock::new(),
+        }
     }
 
     /// Bytes of readback staging buffers kept for reuse (tests).

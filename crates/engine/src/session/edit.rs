@@ -262,7 +262,9 @@ impl Session {
 /// (renamed / regrouped / added parameters, reordered popups; see
 /// [`effectcraft_effects::migrate`]), and a project from before
 /// [`effectcraft_project::SCHEMA_EFFECT_SPACE`] into effect space
-/// ([`effectcraft_effects::migrate::to_effect_space`]). Stamps the current schema.
+/// ([`effectcraft_effects::migrate::to_effect_space`]). Shape path operations get the
+/// properties added since ([`effectcraft_project::build::upgrade_shape_contents`]). Stamps the
+/// current schema.
 pub fn upgrade_effects(p: &mut Project) {
     let to_effect_space = p.schema < effectcraft_project::SCHEMA_EFFECT_SPACE;
     // Effect bounds per layer: (size, top-left in layer coordinates).
@@ -285,6 +287,9 @@ pub fn upgrade_effects(p: &mut Project) {
                 Some(id) => bounds.get(&(*cid, effectcraft_project::LayerId(id))).map_or([0.0; 2], |b| shift(b.1)),
                 None => d,
             };
+            if let Some(contents) = l.props.sub_mut("contents") {
+                effectcraft_project::build::upgrade_shape_contents(&mut effectcraft_project::build::Ids(&mut next), contents);
+            }
             let Some(fx) = l.props.sub_mut("effects") else { continue };
             for n in &mut fx.children {
                 let effectcraft_project::Node::Group(g) = n else { continue };

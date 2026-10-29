@@ -1,5 +1,5 @@
 use super::choices::{APPEARANCE_MODES, DARK_THEMES, LANGUAGES, LIGHT_THEMES, THEMES, WINDOW_GRAPHICS, choices, is_choice, theme_family};
-use super::recent::MAX_EFFECTS_FAVORITES;
+use super::recent::{MAX_EFFECTS_FAVORITES, MAX_RECENT_SCRIPTS};
 use super::sections::{CompPreset, default_labels, parse_hex};
 use super::{Appearance, General, Map, PREFS_VERSION, Prefs, Startup, Value, json};
 
@@ -146,6 +146,7 @@ impl Prefs {
         self.grids.grid_spacing = self.grids.grid_spacing.clamp(1.0, 10_000.0);
         let n = self.general.recent_items as usize;
         self.recent_projects.truncate(n);
+        self.recent_scripts.truncate(MAX_RECENT_SCRIPTS);
     }
 
     /// The value at a dotted key (`general.undoLevels`, `labels.3.color`); `""` = everything.
@@ -211,6 +212,7 @@ impl Prefs {
                 recent_projects: std::mem::take(&mut self.recent_projects),
                 recent_footage: std::mem::take(&mut self.recent_footage),
                 recent_presets: std::mem::take(&mut self.recent_presets),
+                recent_scripts: std::mem::take(&mut self.recent_scripts),
                 recent_fonts: std::mem::take(&mut self.recent_fonts),
                 effects_favorites: std::mem::take(&mut self.effects_favorites),
                 preview: std::mem::take(&mut self.preview),

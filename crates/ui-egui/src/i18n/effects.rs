@@ -1458,6 +1458,7 @@ const FRENCH: &[Row] = &[
     ("ec.vr.rotatesphere", "VR Rotate Sphere", "Rotation de sphère VR"),
     ("ec.vr.sharpen", "VR Sharpen", "Accentuation VR"),
     ("ec.vr.spheretoplane", "VR Sphere to Plane", "Sphère vers plan VR"),
+    ("ec.3d.instance3d", "3D Layer Instance", "Instance de calque 3D"),
 ];
 
 /// French (`fr`) category labels, keyed by the registry's English category.

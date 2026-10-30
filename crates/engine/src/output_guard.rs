@@ -12,7 +12,9 @@
 //! write the project's own file and do not.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Component;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use effectcraft_project::render_queue::{RenderQueueItem, log_path, numbered_template, sequence_frame, sequence_path};
@@ -180,6 +182,7 @@ fn identity_hash(handle: &same_file::Handle) -> u64 {
 }
 
 /// `path` made absolute, with `.` and `..` resolved by name alone (no file is looked at).
+#[cfg(not(target_arch = "wasm32"))]
 fn lexical(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut out = PathBuf::new();
@@ -200,9 +203,17 @@ fn lexical(path: &Path) -> PathBuf {
 }
 
 /// The name a path is compared by: absolute, resolved by name, without case where volumes ignore it.
+#[cfg(not(target_arch = "wasm32"))]
 fn key(path: &Path) -> String {
     let parts: Vec<String> = lexical(path).components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
     fold(&parts.join("/"))
+}
+
+/// Browser file-table keys distinguish case and literal dot segments, but not a leading slash.
+#[cfg(target_arch = "wasm32")]
+fn key(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    if path.starts_with('/') { path.into_owned() } else { format!("/{path}") }
 }
 
 fn fold(name: &str) -> String {
@@ -274,9 +285,6 @@ impl Session {
 
     /// What reads the file at `path`, if the project does.
     fn blocking(&self, path: &str) -> Option<Source> {
-        if cfg!(target_arch = "wasm32") {
-            return None;
-        }
         self.protected_files().find(Path::new(path)).cloned()
     }
 
@@ -300,9 +308,7 @@ impl Session {
     /// [`Session::write_output`] against files already found ([`Session::protected_files`]),
     /// for a command that writes many.
     pub(crate) fn write_output_with(&self, protected: &Protected, path: &str, bytes: &[u8]) -> crate::Result<()> {
-        if !cfg!(target_arch = "wasm32")
-            && let Some(source) = protected.find(Path::new(path))
-        {
+        if let Some(source) = protected.find(Path::new(path)) {
             return Err(crate::EngineError::Other(source.refusal(path, Use::Export)));
         }
         self.services.write_file(path, bytes).map_err(|e| crate::EngineError::Other(format!("cannot write {path}: {e}")))
@@ -452,6 +458,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn paths_compare_by_name_once_resolved() {
         let here = std::env::current_dir().unwrap();
         assert_eq!(key(Path::new("a/b/../c.mp4")), key(Path::new("a/c.mp4")));

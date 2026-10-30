@@ -89,6 +89,9 @@ fn render_frame_never_writes_over_a_file_the_project_reads() {
     let v = r.reply("render.frame", json!({"path": r.text("frame.png")}));
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(&r.read("frame.png")[..8], b"\x89PNG\r\n\x1a\n");
+    let v = r.reply("render.frame", json!({"path": r.text("inline.png"), "base64": true, "write": true}));
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["result"]["png"].as_str(), Some(control::base64(&r.read("inline.png")).as_str()));
 }
 
 #[test]

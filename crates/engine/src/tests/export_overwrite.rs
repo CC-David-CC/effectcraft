@@ -221,24 +221,38 @@ fn collect_files_leaves_footage_that_is_already_in_the_folder() {
 /// The movies a timeline export renders beside it are written like any other output.
 #[test]
 fn a_timeline_export_does_not_pre_render_over_footage() {
-    let mut f = Fixture::new("timeline-prerender");
-    f.comp("Main");
-    f.s.execute("layer.newSolid", json!({"name": "Red", "color": "#ff0000"})).unwrap();
-    // OpenTimelineIO has no solids: the solid is rendered to a movie beside the document.
-    let params = json!({"path": f.text("Main.otio"), "prerender": "unsupported"});
-    let r = f.s.execute("file.exportTimeline", params.clone()).unwrap();
-    let movies = f.exported();
-    assert_eq!(movies.len(), 1, "{r}");
-    assert_eq!(r["prerendered"].as_array().map(Vec::len), Some(1), "{r}");
-    // That movie is footage now.
-    let movie = std::path::Path::new(&movies[0]).file_name().unwrap().to_string_lossy().into_owned();
-    f.footage(&movie);
-    let r = f.s.execute("file.exportTimeline", params).unwrap();
-    assert_eq!(f.read(&movie), SOURCE, "the footage is as it was");
-    assert_eq!(f.exported().len(), 1, "no second render was started");
-    assert_eq!(r["prerendered"], json!([]), "{r}");
-    let warnings = r["warnings"].as_array().unwrap().iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n");
-    assert!(warnings.contains(&movie) && warnings.contains("footage"), "the export says why: {r}");
+    for background in [false, true] {
+        let mut f = Fixture::new(&format!("timeline-prerender-{background}"));
+        f.comp("Main");
+        f.s.execute("layer.newSolid", json!({"name": "Red", "color": "#ff0000"})).unwrap();
+        // OpenTimelineIO has no solids: the solid is rendered to a movie beside the document.
+        let params = json!({"path": f.text("Main.otio"), "prerender": "unsupported", "background": background});
+        let run = |s: &mut crate::Session, params: Value| {
+            let result = s.execute("file.exportTimeline", params).unwrap();
+            if background {
+                assert!(result["job"].is_string(), "{result}");
+                s.wait_jobs();
+                let done = s.job_log.last().unwrap();
+                assert_eq!(done.status, "done", "{}", done.message);
+                done.result.clone()
+            } else {
+                result
+            }
+        };
+        let r = run(&mut f.s, params.clone());
+        let movies = f.exported();
+        assert_eq!(movies.len(), 1, "{r}");
+        assert_eq!(r["prerendered"].as_array().map(Vec::len), Some(1), "{r}");
+        // That movie is footage now.
+        let movie = std::path::Path::new(&movies[0]).file_name().unwrap().to_string_lossy().into_owned();
+        f.footage(&movie);
+        let r = run(&mut f.s, params);
+        assert_eq!(f.read(&movie), SOURCE, "the footage is as it was");
+        assert_eq!(f.exported().len(), 1, "no second render was started");
+        assert_eq!(r["prerendered"], json!([]), "{r}");
+        let warnings = r["warnings"].as_array().unwrap().iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n");
+        assert!(warnings.contains(&movie) && warnings.contains("footage"), "the export says why: {r}");
+    }
 }
 
 /// `file.checkOutput` answers before anything is written, for callers that write the file

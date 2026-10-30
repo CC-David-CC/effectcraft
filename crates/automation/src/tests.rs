@@ -486,6 +486,21 @@ fn autosave_flushes_on_read_errors_and_broken_output() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+fn fake_render_frame(session: &Session, params: &Value) -> Value {
+    let png = crate::encode_png(4, 2, vec![255; 32], 0).unwrap();
+    if params["write"] == true {
+        let Some(path) = params["path"].as_str() else { return json!({"ok": false, "error": "missing output path"}) };
+        if let Err(error) = session.write_output(path, &png) {
+            return json!({"ok": false, "error": error.to_string()});
+        }
+    }
+    let mut result = json!({"comp": 1, "time": 0.5, "width": 4, "height": 2, "png": base64::encode(&png)});
+    if params["write"] == true {
+        result["path"] = params["path"].clone();
+    }
+    json!({"ok": true, "result": result})
+}
+
 /// A fake desktop control channel: answers `engine.execute` from a real session, and canned
 /// `render.frame` / `ui.screenshot` replies.
 fn fake_app() -> u16 {
@@ -503,10 +518,7 @@ fn fake_app() -> u16 {
                     Ok(v) => json!({"ok": true, "result": v}),
                     Err(e) => json!({"ok": false, "error": e.to_string()}),
                 },
-                "render.frame" => {
-                    let png = crate::encode_png(4, 2, vec![255; 32], 0).unwrap();
-                    json!({"ok": true, "result": {"comp": 1, "time": 0.5, "width": 4, "height": 2, "png": base64::encode(&png)}})
-                }
+                "render.frame" => fake_render_frame(&session, p),
                 "ui.screenshot" => {
                     let png = crate::encode_png(8, 8, vec![128; 256], 0).unwrap();
                     std::fs::write(p["path"].as_str().unwrap(), png).unwrap();
@@ -1695,10 +1707,8 @@ fn bridged_render_frame_asks_the_app_before_it_writes() {
                     Ok(v) => json!({"ok": true, "result": v}),
                     Err(e) => json!({"ok": false, "error": e.to_string()}),
                 },
-                "render.frame" => {
-                    let png = crate::encode_png(4, 2, vec![255; 32], 0).unwrap();
-                    json!({"ok": true, "result": {"comp": 1, "time": 0.5, "width": 4, "height": 2, "png": base64::encode(&png)}})
-                }
+                "render.frame" if p["write"] == true && p["path"].is_string() => fake_render_frame(&session, p),
+                "render.frame" => json!({"ok": false, "error": "a frame save must be one app-owned write"}),
                 m => json!({"ok": false, "error": format!("unknown method `{m}`")}),
             };
             reply["id"] = msg["id"].clone();

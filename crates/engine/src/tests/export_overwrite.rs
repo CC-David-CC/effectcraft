@@ -255,8 +255,8 @@ fn a_timeline_export_does_not_pre_render_over_footage() {
     }
 }
 
-/// `file.checkOutput` answers before anything is written, for callers that write the file
-/// themselves (the CLI, MCP's `render_frame`).
+/// `file.checkOutput` answers before anything is written. Its reply describes current state;
+/// callers still need a guarded write in the owning session, as CLI/MCP frame saves use.
 #[test]
 fn check_output_names_the_files_an_export_may_not_use() {
     let mut f = reading("check-output", "png");
@@ -282,4 +282,52 @@ fn a_timeline_export_does_not_write_over_the_project_file() {
     let e = f.s.execute("file.exportTimeline", json!({"path": f.text("Edit.xml")})).unwrap_err().to_string();
     assert!(e.contains("Edit.xml") && e.contains("project"), "{e}");
     assert_eq!(f.read("Edit.xml"), saved);
+}
+
+#[test]
+fn a_background_timeline_export_rechecks_its_document_before_completion() {
+    let mut f = Fixture::new("timeline-current-project");
+    f.comp("Main");
+    let path = f.text("Pending.xml");
+    let job = f.s.execute("file.exportTimeline", json!({"path": path, "background": true, "prerender": "none"})).unwrap();
+    assert!(job["job"].is_string());
+    // The app may save the project while a background export is waiting to finish.
+    f.s.execute("file.saveAs", json!({"path": path})).unwrap();
+    let saved = f.read("Pending.xml");
+    f.s.wait_jobs();
+    let done = f.s.job_log.last().unwrap();
+    assert_eq!(done.status, "failed", "the destination became the project: {}", done.message);
+    assert!(done.message.contains("project"));
+    assert_eq!(f.read("Pending.xml"), saved);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn background_pre_render_movies_are_checked_again_before_publication() {
+    for source in ["footage", "project"] {
+        let mut f = Fixture::new(&format!("timeline-staged-{source}"));
+        f.comp("Main");
+        f.s.execute("layer.newSolid", json!({"name": "Red"})).unwrap();
+        let params = json!({"path": f.text("Main.otio"), "prerender": "unsupported"});
+        let first = f.s.execute("file.exportTimeline", params.clone()).unwrap();
+        let movie = first["prerendered"][0].as_str().unwrap().to_string();
+        let filename = std::path::Path::new(&movie).file_name().unwrap().to_string_lossy().into_owned();
+        let document = f.read("Main.otio");
+        let mut background = params;
+        background["background"] = json!(true);
+        f.s.execute("file.exportTimeline", background).unwrap();
+        if source == "footage" {
+            f.footage(&filename);
+        } else {
+            f.s.execute("file.saveAs", json!({"path": movie})).unwrap();
+        }
+        let protected = f.read(&filename);
+        f.s.wait_jobs();
+        let done = f.s.job_log.last().unwrap();
+        assert_eq!(done.status, "failed", "{}", done.message);
+        assert!(done.message.contains(source), "{}", done.message);
+        assert_eq!(f.read(&filename), protected);
+        assert_eq!(f.read("Main.otio"), document);
+        assert!(listing(&f.dir).iter().all(|name| !name.starts_with(".effectcraft-prerender-")));
+    }
 }

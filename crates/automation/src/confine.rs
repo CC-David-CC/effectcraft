@@ -88,6 +88,8 @@ const READS: &[(&str, &[&str])] = &[
     ("mediaBrowser.removeFavorite", &["path"]),
     ("face.model.install", &["path"]),
     ("roto.model.install", &["path"]),
+    // Looks up what the file at `path` is (writable roots are readable too).
+    ("file.checkOutput", &["path"]),
     // Reads the template at `path`; what it writes is in `MIXED_WRITES`.
     ("templates.create", &["path"]),
 ];

@@ -65,7 +65,8 @@ pub(super) fn commit(movies: Vec<Movie>, session: &Session) -> crate::Result<()>
             }
         }
         // If a user imported a private staging file, leave the staging folders intact.
-        if let Some((source, _)) = files.iter().find(|(source, _)| session.refuse_export(&source.to_string_lossy()).is_err()) {
+        let protected = session.protected_files();
+        if let Some((source, _)) = files.iter().find(|(source, _)| protected.find(source).is_some()) {
             let source = source.display().to_string();
             for movie in movies {
                 let _kept = movie.directory.keep();
@@ -74,7 +75,9 @@ pub(super) fn commit(movies: Vec<Movie>, session: &Session) -> crate::Result<()>
         }
         // Preflight every destination before replacing any output, including render logs.
         for (_, destination) in &files {
-            session.refuse_export(&destination.to_string_lossy())?;
+            if let Some(found) = protected.find(destination) {
+                return Err(EngineError::Other(found.refusal(&destination.to_string_lossy(), crate::output_guard::Use::Export)));
+            }
         }
         for (source, destination) in files {
             std::fs::rename(&source, &destination).map_err(|e| EngineError::Other(format!("cannot publish pre-render {}: {e}", destination.display())))?;

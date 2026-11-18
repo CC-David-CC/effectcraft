@@ -115,7 +115,9 @@ pub struct Session {
     /// issued, so an unavailable receipt cannot be accepted with a reused revision.
     pub ime_revision: u64,
     pub saved_revision: u64,
-    account_save_generation: u64,
+    // Public for the native and browser hosts' Session struct update expressions.
+    #[doc(hidden)]
+    pub account_save_generation: u64,
     /// The project as last opened or saved: the project is unmodified while it is this very
     /// snapshot, so undoing back to the saved state clears the modified mark.
     pub saved_project: Arc<Project>,

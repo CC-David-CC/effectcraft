@@ -24,6 +24,7 @@ pub(crate) use effect::{CryptoProbeSlot, crypto_coverage, crypto_probe_job, cryp
 pub mod essential;
 pub mod expr_tools;
 mod file;
+pub use file::PreparedAccountSave;
 pub(crate) mod file_more;
 mod focus;
 pub mod footage_panel;

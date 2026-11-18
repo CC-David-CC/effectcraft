@@ -76,6 +76,9 @@ pub fn read_file(path: String) -> JsValue {
 /// with the table path.
 #[wasm_bindgen(js_name = addFile)]
 pub fn add_file(name: String, data: js_sys::Uint8Array) -> String {
+    if crate::app::account_host() {
+        return String::new();
+    }
     let path = crate::files::path_for(&name);
     crate::files::put(&path, data.to_vec().into());
     let p = path.clone();
@@ -104,6 +107,9 @@ pub fn info() -> JsValue {
 /// path, or `/<project name>.ecproj`). Resolves with `{path, bytes}`.
 #[wasm_bindgen(js_name = saveToBrowser)]
 pub fn save_to_browser(path: Option<String>) -> js_sys::Promise {
+    if crate::app::account_host() {
+        return js_sys::Promise::reject(&JsValue::from_str("Save EffectCraft projects through the WebOS account window."));
+    }
     js_sys::Promise::new(&mut |resolve, reject| {
         let path = path.clone();
         crate::post(move |app| {

@@ -26,6 +26,10 @@ pub mod startup;
 pub mod store;
 
 #[cfg(target_arch = "wasm32")]
+mod account;
+#[cfg(target_arch = "wasm32")]
+mod account_port;
+#[cfg(target_arch = "wasm32")]
 pub mod api;
 #[cfg(target_arch = "wasm32")]
 mod app;

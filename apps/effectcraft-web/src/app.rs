@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use effectcraft_engine::Session;
 
 use crate::startup::Startup;
-use crate::{api, audio, browse, config_file, diskcache, files, frames, persist, storage, worker};
+use crate::{account, account_port::AccountPort, api, audio, browse, config_file, diskcache, files, frames, persist, storage, worker};
 use effectcraft_ui_egui::EffectcraftApp;
 use serde_json::json;
 use wasm_bindgen::prelude::*;
@@ -84,7 +84,7 @@ pub(crate) fn open_or_import(app: &mut EffectcraftApp, paths: Vec<String>) {
 /// The eframe app: the shared EffectCraft UI plus the browser host's per-frame duties.
 pub struct WebApp {
     pub app: EffectcraftApp,
-    account_host: bool,
+    account: Option<account::AccountView>,
     /// Keep the session snapshot (off with `?empty`; off with an explicit `"demo"` startup until
     /// the user's own work begins, see `demo_start`).
     pub persist: bool,
@@ -99,6 +99,11 @@ impl eframe::App for WebApp {
     /// Take dropped files out of `raw_input` before eframe can replay them on a hidden tab, read them asynchronously
     /// through `open_or_import`, then run the shared app's input hook.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.account.as_ref().is_some_and(account::AccountView::suspended) {
+            raw_input.events.clear();
+            raw_input.dropped_files.clear();
+            return;
+        }
         // Files dropped on the page are input: read them here, where the browser's drop event is
         // still the current pass's, not from a later (possibly logic-only) tick.
         //
@@ -107,7 +112,9 @@ impl eframe::App for WebApp {
         // import them again on every hidden logic tick.
         let dropped_files = std::mem::take(&mut raw_input.dropped_files);
         let dropped: Vec<web_sys::File> = dropped_files.iter().filter_map(|f| f.web_file().cloned()).collect();
-        if !dropped.is_empty() {
+        if let Some(account) = &self.account {
+            account.import_dropped(dropped);
+        } else if !dropped.is_empty() {
             files::read_files(dropped, |paths| post(move |app| open_or_import(app, paths)));
         }
         self.app.raw_input_hook(ctx, raw_input);
@@ -120,6 +127,12 @@ impl eframe::App for WebApp {
         let actions = ACTIONS.with(|a| std::mem::take(&mut *a.borrow_mut()));
         for f in actions {
             f(&mut self.app);
+        }
+        if let Some(account) = &mut self.account {
+            account.poll(&mut self.app, ctx);
+            if account.suspended() {
+                return;
+            }
         }
         self.app.tick(ctx, frame);
         // eframe on the web ignores `ViewportCommand::Title`: the tab title follows the open document here.
@@ -143,16 +156,23 @@ impl eframe::App for WebApp {
         api::set_info("gpu", json!({"compositor": self.app.gpu_adapter(), "viewerOnGpu": self.app.viewer_on_gpu()}));
         api::set_info("frameWorkers", frames::stats());
         // Settings ▸ Disk ▸ Disk Cache (frames in the Origin Private File System).
-        if !self.account_host {
+        if self.account.is_none() {
             let d = &self.app.session.prefs.disk;
             diskcache::configure(d.disk_cache_enabled, d.disk_cache_max_gb, storage::quota());
         }
         api::set_info("diskCache", diskcache::stats());
         self.app.finish_ime_logic(ctx);
+        if let Some(account) = &mut self.account
+            && let Err(error) = account.publish_state(&self.app)
+        {
+            self.app.ui.status = error;
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.app.ui(ui, frame);
+        if !self.account.as_ref().is_some_and(account::AccountView::suspended) {
+            self.app.ui(ui, frame);
+        }
     }
 }
 
@@ -175,7 +195,7 @@ fn query_value(name: &str) -> Option<String> {
     query().and_then(|p| p.get(name))
 }
 
-fn account_host() -> bool {
+pub(crate) fn account_host() -> bool {
     query_value("host").as_deref() == Some("webos-account")
 }
 
@@ -258,6 +278,11 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     let canvas: web_sys::HtmlCanvasElement = doc.get_element_by_id(&canvas_id).ok_or("no canvas")?.dyn_into()?;
     install_canvas_shortcuts(&canvas);
     let account_host = account_host();
+    let port = if account_host {
+        Some(AccountPort::connect().map_err(|error| JsValue::from_str(&error))?)
+    } else {
+        None
+    };
     let empty = account_host || query_flag("empty");
     let home = !account_host && query_flag("home");
     // Browser storage: settings, recent projects, imported media, saved projects, auto-saves and
@@ -291,8 +316,20 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
         diskcache::init();
         storage::refresh();
     }
+    let (initial_session, started, missing) = if let Some(port) = &port {
+        match account::open(port, session()).await {
+            Ok((session, started, missing)) => (Some(session), Some(started), missing),
+            Err(error) => {
+                port.startup_failed(&error);
+                return Err(JsValue::from_str(&error));
+            }
+        }
+    } else {
+        (None, None, 0)
+    };
+    let ui_port = port.clone();
     let runner = eframe::WebRunner::new();
-    runner
+    let boot = runner
         .start(
             canvas,
             eframe::WebOptions::default(),
@@ -320,7 +357,7 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                         show_device_lost(&message, kept);
                     });
                 }
-                let mut session = session();
+                let mut session = initial_session.unwrap_or_else(session);
                 session.load_settings();
                 let recovery = if account_host {
                     session.prefs.auto_save.enabled = false;
@@ -349,6 +386,16 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                     app.offer_recovery(r);
                 }
                 install_hooks(&mut app);
+                let account = ui_port.map(|port| {
+                    port.wake_on(cc.egui_ctx.clone());
+                    let account = account::AccountView::new(port);
+                    app.hooks.account_project = Some(account.project_service());
+                    app.hooks.pick_files = Some(Box::new(account.media_picker()));
+                    if missing > 0 {
+                        app.ui.status = format!("{missing} linked media files are unavailable in this account.");
+                    }
+                    account
+                });
                 // Viewer frames render in frame workers (`?frameworkers=N`, 0 or `?noworkers`:
                 // on the page's thread), each on its own WebGPU device where the browser has
                 // WebGPU in workers (`?nogpuworkers`: their CPU).
@@ -364,10 +411,19 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 }
                 let backend = cc.wgpu_render_state.as_ref().map(|rs| format!("{:?}", rs.adapter.get_info().backend));
                 api::set_info("backend", json!(backend));
-                Ok(Box::new(WebApp { app, account_host, persist: keep_session, demo_start: !empty && !keep_session, document_title: String::new() }))
+                Ok(Box::new(WebApp { app, account, persist: keep_session, demo_start: !empty && !keep_session, document_title: String::new() }))
             }),
         )
-        .await?;
+        .await;
+    if let Err(error) = boot {
+        if let Some(port) = &port {
+            port.startup_failed(&persist::js_err(error.clone()));
+        }
+        return Err(error);
+    }
+    if let (Some(port), Some(started)) = (port, started) {
+        port.publish("started", started, None).map_err(|error| JsValue::from_str(&error))?;
+    }
     // Hide the loading message once the app runs.
     if let Some(el) = doc.get_element_by_id("loading") {
         el.remove();

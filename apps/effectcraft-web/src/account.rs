@@ -138,6 +138,8 @@ impl AccountView {
                         Err(error) => reply["message"] = json!(error.to_string()),
                     }
                 } else {
+                    // Let the host retire this draft request before its correlated reply arrives.
+                    self.publish_state(app)?;
                     reply["message"] = json!("The EffectCraft project changed before recovery capture.");
                 }
                 self.port.publish("recovery-captured", reply, None)
@@ -167,7 +169,6 @@ impl AccountView {
         if self.suspended() || self.busy() {
             return Err("Finish the pending EffectCraft project operation first.".into());
         }
-        let session = &mut app.session;
         match action {
             AccountProjectRequest::Close => self.port.publish("close-intent", json!({}), None),
             AccountProjectRequest::New => self.request_dialog(json!({"operation":"new","settings":"{}"}), None),

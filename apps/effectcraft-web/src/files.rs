@@ -272,6 +272,10 @@ pub fn zip_store(entries: &[(String, Arc<[u8]>)]) -> Vec<u8> {
 
 /// Show the browser's file picker; `then` gets the picked files' table paths once they are read.
 pub fn pick(accept: &str, multiple: bool, then: impl FnOnce(Vec<String>) + 'static) -> Result<(), JsValue> {
+    pick_raw(accept, multiple, |picked| read_files(picked, then))
+}
+
+pub(crate) fn pick_raw(accept: &str, multiple: bool, then: impl FnOnce(Vec<web_sys::File>) + 'static) -> Result<(), JsValue> {
     let doc = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
     let input: web_sys::HtmlInputElement = doc.create_element("input")?.dyn_into()?;
     input.set_type("file");
@@ -280,7 +284,7 @@ pub fn pick(accept: &str, multiple: bool, then: impl FnOnce(Vec<String>) + 'stat
     let inp = input.clone();
     let on_change = Closure::once_into_js(move || {
         let Some(list) = inp.files() else { return };
-        read_files((0..list.length()).filter_map(|i| list.get(i)).collect(), then);
+        then((0..list.length()).filter_map(|i| list.get(i)).collect());
     });
     input.add_event_listener_with_callback("change", on_change.unchecked_ref())?;
     input.click();

@@ -57,6 +57,22 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     s.stored_paths.add(&s.project, Some(path));
     s.restore_view(&effectcraft_project::saved_view(&text));
     s.note_project_path(path);
+    let saved_by = effectcraft_project::saved_by(&text);
+    warn_open_compatibility(s, &repaired, &refused, saved_by.as_deref());
+    // Lazy open: footage is checked in the background (Progress panel), not before the
+    // project shows.
+    if s.check_footage_on_open {
+        crate::footage_check::start(s, None, false)?;
+    }
+    Ok(json!({"path": path, "savedBy": saved_by, "repaired": repaired}))
+}
+
+fn warn_open_compatibility(
+    s: &mut Session,
+    repaired: &[String],
+    refused: &[(ItemId, String, crate::doc_path::NotFollowed)],
+    saved_by: Option<&str>,
+) {
     // Values past the limits (a corrupt or hostile file) were brought within them (#788).
     if !repaired.is_empty() {
         let more = repaired.len().saturating_sub(3);
@@ -69,19 +85,12 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.toast(format!("{n} footage item{} marked missing: {}.", if n == 1 { "" } else { "s" }, crate::doc_path::refusal(first, *why)));
     }
     // Written by a newer EffectCraft: what this version doesn't know would be lost on saving.
-    let saved_by = effectcraft_project::saved_by(&text);
-    if let Some(v) = saved_by.as_deref().filter(|v| effectcraft_project::is_newer_version(v, effectcraft_project::APP_VERSION)) {
+    if let Some(v) = saved_by.filter(|v| effectcraft_project::is_newer_version(v, effectcraft_project::APP_VERSION)) {
         s.toast(format!(
             "This project was saved by EffectCraft {v}, newer than this version ({}). Settings this version doesn't know are lost if you save it.",
             effectcraft_project::APP_VERSION
         ));
     }
-    // Lazy open: footage is checked in the background (Progress panel), not before the
-    // project shows.
-    if s.check_footage_on_open {
-        crate::footage_check::start(s, None, false)?;
-    }
-    Ok(json!({"path": path, "savedBy": saved_by, "repaired": repaired}))
 }
 
 /// The project file's text for `path`: `.ecproj` JSON, or XML for `.ecprojx` / `.xml` (a
@@ -91,6 +100,26 @@ pub(crate) fn file_text(s: &Session, path: &str) -> Result<String> {
     let compact = s.prefs.project.compact_project_files && !crate::xml_project::is_xml_path(path);
     let json = s.project.to_file_json_with_view(&s.saved_view(), compact)?;
     if crate::xml_project::is_xml_path(path) { crate::xml_project::to_xml(&json).map_err(EngineError::Other) } else { Ok(json) }
+}
+
+const ACCOUNT_PROJECT_BYTES: usize = 128 * 1024 * 1024;
+
+fn check_account_path(path: &str) -> Result<()> {
+    if path.len() > 2048
+        || !path.to_ascii_lowercase().ends_with(".ecproj")
+        || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+        || path.chars().any(|ch| ch == '\\' || ch.is_control())
+    {
+        return Err(EngineError::Other("Choose an account-relative .ecproj destination.".into()));
+    }
+    Ok(())
+}
+
+fn check_account_size(bytes: &[u8]) -> Result<()> {
+    if bytes.len() > ACCOUNT_PROJECT_BYTES {
+        return Err(EngineError::Other("The EffectCraft project exceeds the WebOS project size limit.".into()));
+    }
+    Ok(())
 }
 
 /// The native composition snapshot waiting for an account Storage receipt.
@@ -106,17 +135,8 @@ pub struct PreparedAccountSave {
 impl Session {
     /// Serialize the captured composition and editor view without changing the saved revision.
     pub fn prepare_account_save(&self, path: &str) -> Result<(PreparedAccountSave, Vec<u8>)> {
-        if path.len() > 2048
-            || !path.to_ascii_lowercase().ends_with(".ecproj")
-            || path.split('/').any(|part| matches!(part, "" | "." | ".."))
-            || path.chars().any(|ch| ch == '\\' || ch.is_control())
-        {
-            return Err(EngineError::Other("Choose an account-relative .ecproj destination.".into()));
-        }
-        let bytes = file_text(self, path)?.into_bytes();
-        if bytes.len() > 128 * 1024 * 1024 {
-            return Err(EngineError::Other("The EffectCraft project exceeds the WebOS project size limit.".into()));
-        }
+        check_account_path(path)?;
+        let bytes = self.capture_account_draft()?;
         let prepared = PreparedAccountSave {
             original: self.saved_project.clone(),
             snapshot: self.project.clone(),
@@ -126,6 +146,39 @@ impl Session {
             path: path.to_owned(),
         };
         Ok((prepared, bytes))
+    }
+
+    /// Serialize the active composition and editor view for local recovery.
+    pub fn capture_account_draft(&self) -> Result<Vec<u8>> {
+        let bytes = file_text(self, "Untitled.ecproj")?.into_bytes();
+        check_account_size(&bytes)?;
+        Ok(bytes)
+    }
+
+    /// Install an account composition or draft without native filesystem path resolution.
+    ///
+    /// The browser host must restrict its media services to verified originals for this account.
+    /// Stored footage paths are identifiers for those services, independent of Save As.
+    pub fn open_account_project(&mut self, path: Option<&str>, bytes: &[u8], recover: bool) -> Result<()> {
+        if let Some(path) = path {
+            check_account_path(path)?;
+        } else if !recover {
+            return Err(EngineError::Other("Choose an account EffectCraft project.".into()));
+        }
+        check_account_size(bytes)?;
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| EngineError::Other("This is not a text EffectCraft project.".into()))?;
+        let (project, repaired) = Project::from_json_repaired(text)
+            .map_err(|error| EngineError::Other(format!("This is not an EffectCraft project: {error}")))?;
+        let view = effectcraft_project::saved_view(text);
+
+        self.replace_project(project, path.map(str::to_owned));
+        self.restore_view(&view);
+        if recover {
+            self.mark_unsaved();
+        }
+        warn_open_compatibility(self, &repaired, &[], effectcraft_project::saved_by(text).as_deref());
+        Ok(())
     }
 
     /// Bind only the confirmed native snapshot and keep later edits available for recovery.
@@ -169,6 +222,38 @@ mod account_tests {
         let (old_document, _) = session.prepare_account_save("Video/Cut.ecproj").unwrap();
         session.replace_project(Project::default(), None);
         assert!(session.adopt_account_save(old_document).is_err());
+    }
+
+    #[test]
+    fn account_open_and_recovery_preserve_effectcraft_content_and_view() {
+        let mut source = Session::default();
+        source.execute("comp.new", json!({"name":"Saved comp","width":160,"height":96})).unwrap();
+        source.set_time(effectcraft_time::Tick::from_seconds_f64(2.0));
+        let (_, bytes) = source.prepare_account_save("Video/Cut.ecproj").unwrap();
+        source.execute("comp.new", json!({"name":"Draft comp","width":320,"height":200})).unwrap();
+        let draft = source.capture_account_draft().unwrap();
+
+        let mut opened = Session::default();
+        let path = "Projects/Renamed.ecproj";
+        opened.open_account_project(Some(path), &bytes, false).unwrap();
+        assert_eq!(opened.path.as_deref(), Some(path));
+        assert!(!opened.is_dirty());
+        assert!(opened.project.items.values().any(|item| item.name == "Saved comp"));
+        assert!(!opened.project.items.values().any(|item| item.name == "Draft comp"));
+        assert_eq!(opened.saved_view(), effectcraft_project::saved_view(std::str::from_utf8(&bytes).unwrap()));
+
+        assert!(opened.open_account_project(Some("../wrong.ecproj"), &draft, true).is_err());
+        assert!(opened.open_account_project(Some(path), b"not a project", false).is_err());
+        assert_eq!(opened.path.as_deref(), Some(path));
+        assert!(!opened.is_dirty());
+        assert!(opened.open_account_project(None, &bytes, false).is_err());
+
+        for binding in [Some(path), None] {
+            opened.open_account_project(binding, &draft, true).unwrap();
+            assert_eq!(opened.path.as_deref(), binding);
+            assert!(opened.is_dirty());
+            assert!(opened.project.items.values().any(|item| item.name == "Draft comp"));
+        }
     }
 }
 

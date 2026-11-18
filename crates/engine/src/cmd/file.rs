@@ -3,6 +3,7 @@
 use effectcraft_color::Label;
 use effectcraft_project::{FootageKind, ItemId, ItemKind, LayerSource, Project};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use super::{CommandSpec, always, b_p, bad, str_p};
 use crate::sequence::{SequenceOptions, Source};
@@ -90,6 +91,85 @@ pub(crate) fn file_text(s: &Session, path: &str) -> Result<String> {
     let compact = s.prefs.project.compact_project_files && !crate::xml_project::is_xml_path(path);
     let json = s.project.to_file_json_with_view(&s.saved_view(), compact)?;
     if crate::xml_project::is_xml_path(path) { crate::xml_project::to_xml(&json).map_err(EngineError::Other) } else { Ok(json) }
+}
+
+/// The native composition snapshot waiting for an account Storage receipt.
+pub struct PreparedAccountSave {
+    original: Arc<Project>,
+    snapshot: Arc<Project>,
+    generation: u64,
+    revision: u64,
+    original_path: Option<String>,
+    path: String,
+}
+
+impl Session {
+    /// Serialize the captured composition and editor view without changing the saved revision.
+    pub fn prepare_account_save(&self, path: &str) -> Result<(PreparedAccountSave, Vec<u8>)> {
+        if path.len() > 2048
+            || !path.to_ascii_lowercase().ends_with(".ecproj")
+            || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+            || path.chars().any(|ch| ch == '\\' || ch.is_control())
+        {
+            return Err(EngineError::Other("Choose an account-relative .ecproj destination.".into()));
+        }
+        let bytes = file_text(self, path)?.into_bytes();
+        if bytes.len() > 128 * 1024 * 1024 {
+            return Err(EngineError::Other("The EffectCraft project exceeds the WebOS project size limit.".into()));
+        }
+        let prepared = PreparedAccountSave {
+            original: self.saved_project.clone(),
+            snapshot: self.project.clone(),
+            generation: self.account_save_generation,
+            revision: self.revision,
+            original_path: self.path.clone(),
+            path: path.to_owned(),
+        };
+        Ok((prepared, bytes))
+    }
+
+    /// Bind only the confirmed native snapshot and keep later edits available for recovery.
+    pub fn adopt_account_save(&mut self, save: PreparedAccountSave) -> Result<()> {
+        if self.account_save_generation != save.generation || self.path != save.original_path || !Arc::ptr_eq(&self.saved_project, &save.original) {
+            return Err(EngineError::Other("The account save belongs to a different EffectCraft project revision.".into()));
+        }
+        self.account_save_generation = self.account_save_generation.wrapping_add(1);
+        self.path = Some(save.path);
+        self.saved_revision = if Arc::ptr_eq(&self.project, &save.snapshot) { self.revision } else { save.revision };
+        self.saved_project = save.snapshot;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+
+    #[test]
+    fn account_save_marks_only_the_captured_effectcraft_composition_as_saved() {
+        let mut session = Session::default();
+        session.execute("comp.new", json!({"name":"Captured comp","width":160,"height":96})).unwrap();
+        let (save, bytes) = session.prepare_account_save("Video/Cut.ecproj").unwrap();
+        let (obsolete, _) = session.prepare_account_save("Video/Other.ecproj").unwrap();
+        assert!(session.is_dirty() && session.path.is_none());
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let saved = Project::from_json(text).unwrap();
+        assert!(saved.items.values().any(|item| item.name == "Captured comp"));
+        assert!(!saved.items.values().any(|item| item.name == "Later comp"));
+        session.execute("comp.new", json!({"name":"Later comp","width":160,"height":96})).unwrap();
+        session.adopt_account_save(save).unwrap();
+        assert_eq!(session.path.as_deref(), Some("Video/Cut.ecproj"));
+        assert!(session.project.items.values().any(|item| item.name == "Later comp"));
+        assert!(session.is_dirty());
+        assert!(session.adopt_account_save(obsolete).is_err());
+        assert!(session.prepare_account_save("../Cut.ecproj").is_err());
+        let (next, _) = session.prepare_account_save("Video/Cut.ecproj").unwrap();
+        session.adopt_account_save(next).unwrap();
+        assert!(!session.is_dirty());
+        let (old_document, _) = session.prepare_account_save("Video/Cut.ecproj").unwrap();
+        session.replace_project(Project::default(), None);
+        assert!(session.adopt_account_save(old_document).is_err());
+    }
 }
 
 fn save_to(s: &mut Session, path: &str) -> Result<Value> {

@@ -115,6 +115,7 @@ pub struct Session {
     /// issued, so an unavailable receipt cannot be accepted with a reused revision.
     pub ime_revision: u64,
     pub saved_revision: u64,
+    account_save_generation: u64,
     /// The project as last opened or saved: the project is unmodified while it is this very
     /// snapshot, so undoing back to the saved state clears the modified mark.
     pub saved_project: Arc<Project>,
@@ -325,6 +326,7 @@ impl Default for Session {
             // A fresh session gets its own process-monotonic stamp even before its first edit.
             ime_revision: commands::text_edit::next_ime_revision().unwrap_or(u64::MAX),
             saved_revision: 0,
+            account_save_generation: 0,
             path: None,
             state: EditorState { snapping: true, view_layout: 1, ..Default::default() },
             services: Arc::new(FsServices),

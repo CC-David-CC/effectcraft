@@ -1,5 +1,38 @@
 use super::*;
 
+#[test]
+fn hosted_project_commands_keep_the_native_composition_until_the_account_window_responds() {
+    use crate::AccountProjectRequest as Request;
+    use std::{cell::RefCell, rc::Rc};
+
+    let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+    app.session.execute("comp.new", json!({"name": "Current composition"})).unwrap();
+    let revision = app.session.revision;
+    let routed = Rc::new(RefCell::new(Vec::new()));
+    let requests = routed.clone();
+    app.hooks.account_project = Some(Box::new(move |action| {
+        requests.borrow_mut().push(action);
+        Ok(())
+    }));
+    let ctx = egui::Context::default();
+    for (command, params) in [
+        ("file.newProject", json!({})),
+        ("file.open", json!({"path":"Video/Other.ecproj"})),
+        ("file.save", json!({})),
+        ("file.saveAs", json!({})),
+        ("file.closeProject", json!({})),
+    ] {
+        assert_eq!(invoke(&mut app, &ctx, command, params).unwrap(), json!({"dialog":"accountProject"}));
+    }
+    assert!(invoke(&mut app, &ctx, "file.incrementAndSave", json!({})).is_err());
+    assert_eq!(
+        *routed.borrow(),
+        [Request::New, Request::Open(Some("Video/Other.ecproj".into())), Request::Save, Request::SaveAs, Request::Close],
+    );
+    assert_eq!(app.session.revision, revision);
+    assert!(app.session.is_dirty() && app.session.path.is_none());
+}
+
 /// #882: at 125 % / 150 % display scaling Zoom In reaches 100 % (one comp pixel per screen
 /// pixel), not 100 % in points (125 % / 150 % on screen).
 #[test]

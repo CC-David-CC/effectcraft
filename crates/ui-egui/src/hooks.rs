@@ -32,6 +32,19 @@ impl FileDialog {
 /// #3084); the host catches that and answers with the error instead of taking the app down.
 pub type DialogDone = Box<dyn FnOnce(Result<Vec<String>, String>) + Send>;
 
+/// Native project actions whose completion is owned by the WebOS account window.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AccountProjectRequest {
+    New,
+    Demo,
+    Open(Option<String>),
+    Save,
+    SaveAs,
+    Close,
+}
+
+pub type AccountProjectFn = Box<dyn Fn(AccountProjectRequest) -> Result<(), String>>;
+
 /// Host hooks provided by the native app (file pickers etc.).
 #[derive(Default)]
 pub struct Hooks {
@@ -62,6 +75,8 @@ pub struct Hooks {
     /// a drag over the window (#511), and on Linux a blocking desktop-portal dialog never pumps
     /// events, so the compositor marks the window as not responding (#1275).
     pub file_dialog_async: Option<Box<dyn Fn(FileDialog, DialogDone)>>,
+    /// Route project lifetime and saves to the account window before standalone dialogs run.
+    pub account_project: Option<AccountProjectFn>,
     /// Tells the user the graphics device was lost and the window is closing, once. `saved` is
     /// the auto-save of unsaved changes (`None`: nothing was unsaved), its path or why it failed.
     pub device_lost: Option<Box<dyn Fn(Option<Result<String, String>>)>>,

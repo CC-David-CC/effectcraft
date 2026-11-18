@@ -192,6 +192,26 @@ pub fn waits_on_dialog(result: &Value) -> bool {
 /// Execute a UI or engine command by id.
 pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: Value) -> Result<Value, String> {
     crate::control::check_script_render(app, id)?;
+    if let Some(account) = app.hooks.account_project.as_ref() {
+        use crate::AccountProjectRequest as Request;
+        let action = match id {
+            "file.newProject" => Some(Request::New),
+            "file.openDemoProject" => Some(Request::Demo),
+            "file.open" => Some(Request::Open(params["path"].as_str().map(str::to_owned))),
+            "file.save" => Some(Request::Save),
+            "file.saveAs" => Some(Request::SaveAs),
+            "file.closeProject" | "app.quit" => Some(Request::Close),
+            "file.revert" => return Err("Close and reopen the account project to return to its saved revision.".into()),
+            "file.openRecent" => return Err("Use Open Project to choose a file from your account.".into()),
+            "file.saveCopy" | "file.saveCopyAsXml" | "file.incrementAndSave" => return Err("Use Save As to save a new account project.".into()),
+            "templates.create" => return Err("Project templates are unavailable in the WebOS account window.".into()),
+            _ => None,
+        };
+        if let Some(action) = action {
+            account(action)?;
+            return Ok(json!({"dialog": "accountProject"}));
+        }
+    }
     if matches!(id, "effects.copyPresetsFolderPath" | "mediaBrowser.copySourcePath") {
         return frontend(app, ctx, id, params);
     }

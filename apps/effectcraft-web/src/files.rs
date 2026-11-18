@@ -109,7 +109,10 @@ pub fn download(name: &str, data: &[u8]) -> Result<(), JsValue> {
 
 /// Engine file access (projects): reads from the table; writes go to the table (persisted) and
 /// download, except [`save_quietly`] saves.
-pub struct WebServices;
+#[derive(Default)]
+pub struct WebServices {
+    pub(crate) account_host: bool,
+}
 
 impl Services for WebServices {
     fn read_file(&self, path: &str) -> std::io::Result<Vec<u8>> {
@@ -118,6 +121,12 @@ impl Services for WebServices {
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{path}: open it with File ▸ Open (or drop it on the page)")))
     }
     fn write_file(&self, path: &str, data: &[u8]) -> std::io::Result<()> {
+        if self.account_host
+            && std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|ext| ["ecproj", "ecprojx", "xml"].iter().any(|candidate| ext.eq_ignore_ascii_case(candidate)))
+        {
+            return Err(std::io::Error::other("Save EffectCraft projects through the WebOS account window."));
+        }
         put(path, data.into());
         let quiet = {
             let mut q = QUIET.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

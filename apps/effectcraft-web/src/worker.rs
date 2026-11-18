@@ -162,7 +162,7 @@ pub fn worker_init() {
         post(&obj(&[("type", "file".into()), ("path", path.into()), ("bytes", buf.clone().into())]), Some(&js_sys::Array::of1(&buf)));
     });
     let s = Session {
-        services: Arc::new(crate::files::WebServices),
+        services: Arc::new(crate::files::WebServices::default()),
         footage: pool.clone(),
         importer: Some(Arc::new(crate::files::WebImporter { pool })),
         expr: Some(Arc::new(effectcraft_expr::Expressions)),

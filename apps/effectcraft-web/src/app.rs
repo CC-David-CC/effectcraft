@@ -84,6 +84,7 @@ pub(crate) fn open_or_import(app: &mut EffectcraftApp, paths: Vec<String>) {
 /// The eframe app: the shared EffectCraft UI plus the browser host's per-frame duties.
 pub struct WebApp {
     pub app: EffectcraftApp,
+    account_host: bool,
     /// Keep the session snapshot (off with `?empty`; off with an explicit `"demo"` startup until
     /// the user's own work begins, see `demo_start`).
     pub persist: bool,
@@ -142,8 +143,10 @@ impl eframe::App for WebApp {
         api::set_info("gpu", json!({"compositor": self.app.gpu_adapter(), "viewerOnGpu": self.app.viewer_on_gpu()}));
         api::set_info("frameWorkers", frames::stats());
         // Settings ▸ Disk ▸ Disk Cache (frames in the Origin Private File System).
-        let d = &self.app.session.prefs.disk;
-        diskcache::configure(d.disk_cache_enabled, d.disk_cache_max_gb, storage::quota());
+        if !self.account_host {
+            let d = &self.app.session.prefs.disk;
+            diskcache::configure(d.disk_cache_enabled, d.disk_cache_max_gb, storage::quota());
+        }
         api::set_info("diskCache", diskcache::stats());
         self.app.finish_ime_logic(ctx);
     }
@@ -172,13 +175,20 @@ fn query_value(name: &str) -> Option<String> {
     query().and_then(|p| p.get(name))
 }
 
+fn account_host() -> bool {
+    query_value("host").as_deref() == Some("webos-account")
+}
+
 /// A session wired for the browser: media decoding from memory, expressions, scripting, Render
 /// Queue export to downloads, settings in browser storage, renders and analyses in workers.
 pub fn session() -> Session {
+    let account_host = account_host();
     let pool = Arc::new(effectcraft_media::MediaPool::new());
-    persist::register_media(&pool);
+    if !account_host {
+        persist::register_media(&pool);
+    }
     Session {
-        services: Arc::new(files::WebServices),
+        services: Arc::new(files::WebServices { account_host }),
         footage: pool.clone(),
         importer: Some(Arc::new(files::WebImporter { pool })),
         expr: Some(Arc::new(effectcraft_expr::Expressions)),
@@ -191,8 +201,8 @@ pub fn session() -> Session {
             worker::set_job_worker_gpu(!query_flag("nogpuworkers"));
             Arc::new(worker::WorkerOffload) as Arc<dyn effectcraft_engine::offload::Offload>
         }),
-        browser: Some(Arc::new(browse::WebBrowser)),
-        storage: Some(Arc::new(storage::WebStorage)),
+        browser: (!account_host).then(|| Arc::new(browse::WebBrowser) as Arc<dyn effectcraft_engine::media_browser::Browser>),
+        storage: (!account_host).then(|| Arc::new(storage::WebStorage) as Arc<dyn effectcraft_engine::storage::StorageHost>),
         ..Default::default()
     }
 }
@@ -247,30 +257,40 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     let doc = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
     let canvas: web_sys::HtmlCanvasElement = doc.get_element_by_id(&canvas_id).ok_or("no canvas")?.dyn_into()?;
     install_canvas_shortcuts(&canvas);
-    let empty = query_flag("empty");
-    let home = query_flag("home");
+    let account_host = account_host();
+    let empty = account_host || query_flag("empty");
+    let home = !account_host && query_flag("home");
     // Browser storage: settings, recent projects, imported media, saved projects, auto-saves and
     // the last session come back.
     // Monotonic (performance.now) rather than the wall clock: a system-time jump must not turn
     // the storage-load report negative or huge.
     let t0 = web_time::Instant::now();
-    let stored = match persist::load(&query_value("storage").unwrap_or_default()).await {
-        Ok(n) => n,
-        Err(e) => {
-            log::warn!("browser storage unavailable: {e}");
-            0
-        }
+    let (storage_backend, stored) = if account_host {
+        // The iframe's in-memory store starts empty. Never load standalone settings,
+        // project snapshots, imported media, folder handles or render caches.
+        ("memory".to_owned(), 0)
+    } else {
+        let entries = match persist::load(&query_value("storage").unwrap_or_default()).await {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("browser storage unavailable: {e}");
+                0
+            }
+        };
+        (persist::backend(), entries)
     };
-    api::set_info("storage", json!({"backend": persist::backend(), "entries": stored, "loadMs": t0.elapsed().as_secs_f64() * 1000.0}));
+    api::set_info("storage", json!({"backend": storage_backend, "entries": stored, "loadMs": t0.elapsed().as_secs_f64() * 1000.0}));
     audio::install_unlock();
     // `./effectcraft-config.json`: what to open on load.
     // `?empty` and `?demo` decide by themselves, so they skip the request.
     let startup = if empty || query_flag("demo") { Startup::default() } else { config_file::startup().await };
     // An explicit `"demo"` start leaves the saved session alone until the user opens or edits something.
     let keep_session = !empty && startup.keeps_session();
-    browse::restore();
-    diskcache::init();
-    storage::refresh();
+    if !account_host {
+        browse::restore();
+        diskcache::init();
+        storage::refresh();
+    }
     let runner = eframe::WebRunner::new();
     runner
         .start(
@@ -302,9 +322,14 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 }
                 let mut session = session();
                 session.load_settings();
-                // Scripts in Scripts/Startup run before a project opens.
-                let _ = session.execute("file.runStartupScripts", json!({}));
-                let recovery = session.begin_recovery();
+                let recovery = if account_host {
+                    session.prefs.auto_save.enabled = false;
+                    None
+                } else {
+                    // Scripts in Scripts/Startup run before a project opens.
+                    let _ = session.execute("file.runStartupScripts", json!({}));
+                    session.begin_recovery()
+                };
                 // `?empty`: a blank project; `?demo`: the demo project; otherwise what the config's
                 // `startup` says (default: the last visit's project, the demo on a first visit).
                 let demo = query_flag("demo");
@@ -314,7 +339,9 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 }
                 api::set_info("restored", json!(restored));
                 // The ScriptUI panels open on the last visit open again.
-                let _ = session.execute("window.restoreScriptPanels", json!({}));
+                if !account_host {
+                    let _ = session.execute("window.restoreScriptPanels", json!({}));
+                }
                 let mut app = EffectcraftApp::new(session);
                 app.set_gpu_failure_bridge(gpu_failures);
                 app.ui.start_screen = home;
@@ -330,12 +357,14 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                     app.frames.set_remote(Some(Arc::new(frames::WebFrames::start(n, !query_flag("nogpuworkers")))));
                 }
                 app.frames.set_virtual_id(Arc::new(|path| files::STORE.file_identity(path)));
-                let (tx, rx) = std::sync::mpsc::channel();
-                api::set_sender(tx);
-                app = app.with_control(rx);
+                if !account_host {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    api::set_sender(tx);
+                    app = app.with_control(rx);
+                }
                 let backend = cc.wgpu_render_state.as_ref().map(|rs| format!("{:?}", rs.adapter.get_info().backend));
                 api::set_info("backend", json!(backend));
-                Ok(Box::new(WebApp { app, persist: keep_session, demo_start: !empty && !keep_session, document_title: String::new() }))
+                Ok(Box::new(WebApp { app, account_host, persist: keep_session, demo_start: !empty && !keep_session, document_title: String::new() }))
             }),
         )
         .await?;

@@ -435,8 +435,8 @@ impl EffectcraftApp {
         let slot = body.width() / 4.0;
         let button_rect = |index: usize| Rect::from_min_size(pos2(body.min.x + slot * index as f32, body.min.y), vec2((slot - 2.0).max(1.0), height));
         for (index, kind) in [PanelKind::Composition, PanelKind::Project].into_iter().enumerate() {
-            let label = tr(kind.title());
-            let response = ui.put(button_rect(index), egui::Button::new(label).selected(panel == kind));
+            let label = tr(if kind == PanelKind::Composition { "Viewer" } else { kind.title() });
+            let response = ui.put(button_rect(index), egui::Button::new(label).selected(panel == kind)).on_hover_text(tr(kind.title()));
             self.auto.add_response(&format!("compact.{}", kind.id()), &response, label);
             if response.clicked() {
                 panel = kind;

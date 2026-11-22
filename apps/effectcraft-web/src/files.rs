@@ -276,19 +276,38 @@ pub fn pick(accept: &str, multiple: bool, then: impl FnOnce(Vec<String>) + 'stat
 }
 
 pub(crate) fn pick_raw(accept: &str, multiple: bool, then: impl FnOnce(Vec<web_sys::File>) + 'static) -> Result<(), JsValue> {
+    let input = file_input(accept, multiple)?;
+    open_picker(input, then);
+    Ok(())
+}
+
+pub(crate) fn choose_raw(accept: &str, multiple: bool, then: impl FnOnce(Result<Vec<web_sys::File>, String>) + 'static) {
+    match file_input(accept, multiple) {
+        Ok(input) => open_picker(input, move |files| then(Ok(files))),
+        Err(error) => then(Err(format!("Could not open the file picker: {error:?}"))),
+    }
+}
+
+fn file_input(accept: &str, multiple: bool) -> Result<web_sys::HtmlInputElement, JsValue> {
     let doc = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
     let input: web_sys::HtmlInputElement = doc.create_element("input")?.dyn_into()?;
     input.set_type("file");
     input.set_accept(accept);
     input.set_multiple(multiple);
+    Ok(input)
+}
+
+fn open_picker(input: web_sys::HtmlInputElement, then: impl FnOnce(Vec<web_sys::File>) + 'static) {
     let inp = input.clone();
-    let on_change = Closure::once_into_js(move || {
-        let Some(list) = inp.files() else { return };
-        then((0..list.length()).filter_map(|i| list.get(i)).collect());
+    let complete = Closure::once_into_js(move || {
+        inp.set_onchange(None);
+        inp.set_oncancel(None);
+        let picked = inp.files().map(|list| (0..list.length()).filter_map(|i| list.get(i)).collect()).unwrap_or_default();
+        then(picked);
     });
-    input.add_event_listener_with_callback("change", on_change.unchecked_ref())?;
+    input.set_onchange(Some(complete.unchecked_ref()));
+    input.set_oncancel(Some(complete.unchecked_ref()));
     input.click();
-    Ok(())
 }
 
 /// Read browser files into the table (asynchronously); `then` gets their table paths.

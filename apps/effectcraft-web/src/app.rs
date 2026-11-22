@@ -247,22 +247,24 @@ fn install_hooks(app: &mut EffectcraftApp) {
     // Save a Copy) asks for the name, starting from the open project's (#2788): without asking,
     // Save As would replace the open project's file; Cancel cancels. A name that is already in
     // browser storage asks before replacing it, as the desktop's save dialogs do.
-    app.hooks.pick_save = Some(Box::new(|name: &str| {
-        let name = if name.is_empty() { "Untitled Project.ecproj" } else { name };
-        if !std::path::Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("ecproj") || e.eq_ignore_ascii_case("ecprojx")) {
-            return Some(files::path_for(name));
-        }
-        let window = web_sys::window()?;
-        let typed = window.prompt_with_message_and_default("Save project as:", name).ok().flatten();
-        let typed = crate::store::typed_save_name(name, typed)?;
-        let path = files::path_for(&typed);
-        if files::get(&path).is_some() && !window.confirm_with_message(&format!("{typed} already exists. Replace it?")).unwrap_or(false) {
-            return None;
-        }
-        Some(path)
-    }));
+    app.hooks.pick_save = Some(Box::new(download_path));
     app.hooks.audio_device = Some(Box::new(audio::open));
     app.hooks.audio_devices = Some(Box::new(|| vec!["Browser default output".into()]));
+}
+
+pub(crate) fn download_path(name: &str) -> Option<String> {
+    let name = if name.is_empty() { "Untitled Project.ecproj" } else { name };
+    if !std::path::Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("ecproj") || e.eq_ignore_ascii_case("ecprojx")) {
+        return Some(files::path_for(name));
+    }
+    let window = web_sys::window()?;
+    let typed = window.prompt_with_message_and_default("Save project as:", name).ok().flatten();
+    let typed = crate::store::typed_save_name(name, typed)?;
+    let path = files::path_for(&typed);
+    if files::get(&path).is_some() && !window.confirm_with_message(&format!("{typed} already exists. Replace it?")).unwrap_or(false) {
+        return None;
+    }
+    Some(path)
 }
 
 /// Entry point (called by the page's bootstrap script once the wasm module is instantiated).
@@ -391,6 +393,7 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                     let account = account::AccountView::new(port);
                     app.hooks.account_project = Some(account.project_service());
                     app.hooks.pick_files = Some(Box::new(account.media_picker()));
+                    app.hooks.file_dialog_async = Some(Box::new(account.file_dialog()));
                     if missing > 0 {
                         app.ui.status = format!("{missing} linked media files are unavailable in this account.");
                     }

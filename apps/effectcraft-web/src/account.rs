@@ -3,7 +3,7 @@
 use std::{cell::{Cell, RefCell}, collections::BTreeSet, rc::Rc};
 
 use effectcraft_engine::{Session, cmd::PreparedAccountSave, project::{Footage, FootageKind, ItemKind}};
-use effectcraft_ui_egui::{AccountProjectFn, AccountProjectRequest, EffectcraftApp};
+use effectcraft_ui_egui::{AccountProjectFn, AccountProjectRequest, DialogDone, EffectcraftApp, FileDialog};
 use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
 
@@ -61,6 +61,43 @@ impl AccountView {
 
     pub(crate) fn suspended(&self) -> bool {
         self.lease.is_some() || self.finalized
+    }
+
+    /// Complete the native command after its selected originals have reached Files.
+    pub(crate) fn file_dialog(&self) -> impl Fn(FileDialog, DialogDone) + 'static {
+        let port = self.port.clone();
+        let pending = self.media_pending.clone();
+        move |request, done| {
+            let (exts, many) = match request {
+                FileDialog::Open { exts, many } => (exts, many),
+                FileDialog::Save { default, .. } => {
+                    done(Ok(crate::app::download_path(&default).into_iter().collect()));
+                    return;
+                }
+                FileDialog::Folder | FileDialog::OpenProject => {
+                    done(Err("Use Files to choose an account folder or project.".into()));
+                    return;
+                }
+            };
+            if pending.replace(true) {
+                done(Err("Finish the current EffectCraft media import first.".into()));
+                return;
+            }
+            let accept = exts.iter().map(|ext| format!(".{ext}")).collect::<Vec<_>>().join(",");
+            let port = port.clone();
+            let pending = pending.clone();
+            files::choose_raw(&accept, many, move |selection| {
+                wasm_bindgen_futures::spawn_local(async move {
+                    let paths = match selection {
+                        Ok(picked) => store_originals(&port, picked).await,
+                        Err(error) => Err(error),
+                    };
+                    done(paths);
+                    pending.set(false);
+                    crate::repaint();
+                });
+            });
+        }
     }
 
     pub(crate) fn media_picker(&self) -> impl Fn(&[&str]) -> Vec<String> + 'static {
@@ -407,42 +444,58 @@ fn import_media(port: AccountPort, pending: Rc<Cell<bool>>, picked: Vec<web_sys:
         return;
     }
     wasm_bindgen_futures::spawn_local(async move {
-        let mut paths = Vec::new();
-        let mut errors = Vec::new();
-        for file in picked {
-            let name = file.name();
-            if name.to_ascii_lowercase().ends_with(".ecproj") {
-                errors.push("Upload the project to Files, then use Open Project.".into());
-                continue;
-            }
-            if !original_name(&name) {
-                errors.push("An original has an invalid filename.".into());
-                continue;
-            }
-            match port.store_original(&file).await {
-                Ok((digest, bytes)) => {
-                    let path = format!("{ORIGINAL_PREFIX}{digest}/{name}");
-                    files::STORE.put_file(&path, bytes.into(), false);
-                    paths.push(path);
-                }
-                Err(error) => errors.push(format!("{name}: {error}")),
-            }
-        }
+        let originals = store_originals(&port, picked).await;
         crate::post(move |app| {
             pending.set(false);
-            if !paths.is_empty() {
-                match app.session.execute("file.import", json!({"paths":paths})) {
+            match originals {
+                Ok(paths) if !paths.is_empty() => match app.session.execute("file.import", json!({"paths":paths})) {
                     Ok(result) => {
-                        errors.extend(result["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned));
+                        if let Some(errors) = result["errors"].as_array() {
+                            let messages = errors.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+                            if !messages.is_empty() {
+                                app.ui.status = messages.join(" · ");
+                            }
+                        }
                     }
-                    Err(error) => errors.push(error.to_string()),
-                }
-            }
-            if !errors.is_empty() {
-                app.ui.status = errors.join(" · ");
+                    Err(error) => app.ui.status = error.to_string(),
+                },
+                Err(error) => app.ui.status = error,
+                _ => {}
             }
         });
     });
+}
+
+async fn store_originals(port: &AccountPort, picked: Vec<web_sys::File>) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    let mut errors = Vec::new();
+    for file in picked {
+        let name = file.name();
+        if name.to_ascii_lowercase().ends_with(".ecproj") {
+            errors.push("Upload the project to Files, then use Open Project.".into());
+            continue;
+        }
+        if !original_name(&name) {
+            errors.push("An original has an invalid filename.".into());
+            continue;
+        }
+        match port.store_original(&file).await {
+            Ok((digest, bytes)) => {
+                let path = format!("{ORIGINAL_PREFIX}{digest}/{name}");
+                files::STORE.put_file(&path, bytes.into(), false);
+                paths.push(path);
+            }
+            Err(error) => errors.push(format!("{name}: {error}")),
+        }
+    }
+    if errors.is_empty() {
+        Ok(paths)
+    } else if paths.is_empty() {
+        Err(errors.join(" · "))
+    } else {
+        crate::post(move |app| app.ui.status = errors.join(" · "));
+        Ok(paths)
+    }
 }
 
 fn original_name(name: &str) -> bool {

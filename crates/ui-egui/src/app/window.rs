@@ -85,6 +85,9 @@ impl EffectcraftApp {
     /// those left, above the Timeline), Layer and the viewers beside the Composition panel, and
     /// so on.
     pub fn raise_panel(&mut self, p: PanelKind) {
+        if self.compact_panel.is_some() && p != PanelKind::Timeline {
+            self.compact_panel = Some(p);
+        }
         if !self.ui.dock.is_open(p) {
             let docked = |q: &PanelKind| self.ui.dock.is_docked(*q);
             let near = match p {

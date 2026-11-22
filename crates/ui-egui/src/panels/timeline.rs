@@ -1796,6 +1796,11 @@ struct KeyHit<'a> {
 }
 
 /// Computes this frame's layout: zoom, scroll and the panel's regions.
+/// The compact outline leaves most of the horizontal space for time and layer bars.
+fn outline_width(available: f32, vis: Vis) -> f32 {
+    if available < 760.0 { available * 0.40 } else { (vis.fixed() + 190.0).clamp(420.0, (available * 0.72).max(420.0)) }
+}
+
 fn layout(app: &mut EffectcraftApp, ui: &egui::Ui, rect: Rect, cid: ItemId, comp: &Arc<Comp>) -> Tl {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
@@ -1807,14 +1812,19 @@ fn layout(app: &mut EffectcraftApp, ui: &egui::Ui, rect: Rect, cid: ItemId, comp
     let ruler_h = 34.0;
     let colhdr_h = 22.0;
     let footer_h = 24.0;
-    let vis = Vis::of(&app.ui.timeline);
-    let left_w = (vis.fixed() + 190.0).clamp(420.0, (rect.width() * 0.72).max(420.0));
+    let compact = rect.width() < 760.0;
+    let vis = if compact { Vis::default() } else { Vis::of(&app.ui.timeline) };
+    let left_w = outline_width(rect.width(), vis);
     // Columns wider than the pane scroll horizontally (Shift+wheel / trackpad over the outline,
     // or the scroll bar above the footer); the name column keeps its minimum width.
-    let natural_w = vis.fixed() + 190.0;
+    let natural_w = if compact { left_w } else { vis.fixed() + 190.0 };
     let overflow = (natural_w - left_w).max(0.0);
-    app.ui.timeline.outline_scroll = app.ui.timeline.outline_scroll.clamp(0.0, overflow);
-    let oscroll = app.ui.timeline.outline_scroll;
+    let oscroll = if compact {
+        0.0
+    } else {
+        app.ui.timeline.outline_scroll = app.ui.timeline.outline_scroll.clamp(0.0, overflow);
+        app.ui.timeline.outline_scroll
+    };
     let cw = cols(rect.min.x - oscroll, left_w + overflow, vis);
     let graph_x0 = rect.min.x + left_w + 1.0;
     let graph_x1 = rect.max.x - GUTTER_W;
@@ -1849,7 +1859,7 @@ fn layout(app: &mut EffectcraftApp, ui: &egui::Ui, rect: Rect, cid: ItemId, comp
     let ruler = Rect::from_min_max(pos2(graph_x0, top + header_h - ruler_h), pos2(rect.max.x, top + header_h));
     // The composition marker bin, at the right end of the ruler above the layers' scroll bar.
     let bin = Rect::from_min_max(pos2(graph_x1 + 2.0, ruler.max.y - 16.0), pos2(rect.max.x - 2.0, ruler.max.y - 2.0));
-    let tc_rect = Rect::from_min_size(pos2(rect.min.x + 12.0, top + 6.0), vec2(150.0, 24.0));
+    let tc_rect = Rect::from_min_size(pos2(rect.min.x + 12.0, top + 6.0), vec2(150.0_f32.min((left_w - 12.0).max(1.0)), 24.0));
     let wa_row = Rect::from_min_max(pos2(graph_x0, top + header_h), pos2(rect.max.x, top + header_h + colhdr_h));
     let fd = comp.frame_duration().seconds();
     Tl {
@@ -1879,7 +1889,7 @@ fn layout(app: &mut EffectcraftApp, ui: &egui::Ui, rect: Rect, cid: ItemId, comp
         tc_rect,
         wa_row,
         fd,
-        rh: t.row_h,
+        rh: if compact { t.row_h.max(40.0) } else { t.row_h },
         max_scroll: 0.0,
         ctx,
         comp: comp.clone(),
@@ -1988,7 +1998,9 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         g.ctx.data_mut(|d| d.remove::<SwitchDrag>(switch_drag_id()));
     }
     header_timecode(app, ui, g);
-    header_search_and_switches(app, ui, g);
+    if g.left_w >= 420.0 {
+        header_search_and_switches(app, ui, g);
+    }
     time_navigator(app, ui, g);
     ruler_background(app, g);
     work_area_bar(app, ui, g);
@@ -2170,7 +2182,7 @@ fn layer_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, g: &mut Rw, rc: &RowCt
     layer_name(app, ui, g, rc, name_x);
     layer_row_actions(app, ui, g, rc, &row_resp);
     layer_switches(app, ui, g, rc);
-    if app.ui.timeline.show_modes && rc.layer.source.is_av() {
+    if g.tl.vis.modes && rc.layer.source.is_av() {
         layer_mode_cell(app, ui, g, rc);
         layer_matte_cell(app, ui, g, rc);
     }
@@ -5004,6 +5016,9 @@ fn footer_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, g: &Rw) -> Rect {
         // The layer rows' scroll bar, on the right edge beside the time graph.
         let track = Rect::from_min_max(pos2(rect.max.x - 6.0, rows_rect.min.y + 1.0), pos2(rect.max.x - 2.0, rows_rect.max.y - 1.0));
         app.ui.timeline.scroll_y = widgets::scroll_bar(ui, &mut app.auto, "timeline.scroll", track, app.ui.timeline.scroll_y, max_scroll, &t);
+    }
+    if g.tl.left_w < 420.0 {
+        return footer;
     }
     let tgl = Rect::from_min_size(pos2(footer.min.x + 10.0, footer.min.y + 3.0), vec2(150.0, 18.0));
     let tresp = ui.interact(tgl, egui::Id::unique("tl-toggle-modes"), Sense::click());

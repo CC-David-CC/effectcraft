@@ -425,6 +425,53 @@ impl EffectcraftApp {
         self.dialog.is_some() || panels::dialogs::modal_open(ctx) || file_dialog
     }
 
+    /// Keep the preview and time ruler visible together when the desktop panel columns cannot fit.
+    /// The regular dock tree remains intact for the next wider window.
+    fn compact_workspace(&mut self, ui: &mut egui::Ui, body: Rect) {
+        use crate::i18n::tr;
+        let ctx = ui.ctx().clone();
+        let mut panel = self.compact_panel.unwrap_or(PanelKind::Composition);
+        let height = 42.0_f32.min(body.height() / 3.0);
+        let slot = body.width() / 4.0;
+        let button_rect = |index: usize| Rect::from_min_size(pos2(body.min.x + slot * index as f32, body.min.y), vec2((slot - 2.0).max(1.0), height));
+        for (index, kind) in [PanelKind::Composition, PanelKind::Project].into_iter().enumerate() {
+            let label = tr(kind.title());
+            let response = ui.put(button_rect(index), egui::Button::new(label).selected(panel == kind));
+            self.auto.add_response(&format!("compact.{}", kind.id()), &response, label);
+            if response.clicked() {
+                panel = kind;
+                self.focus_panel(&ctx, kind);
+            }
+        }
+        let label = tr(if self.playback.playing { "Stop" } else { "Play" });
+        let play = ui.put(button_rect(2), egui::Button::new(label));
+        self.auto.add_response("compact.playback", &play, label);
+        if play.clicked() {
+            let profile = self.session.prefs.preview.current.id();
+            let _ = crate::menus::invoke(self, &ctx, "playback.toggle", json!({"shortcut": profile}));
+        }
+        let save = ui.put(button_rect(3), egui::Button::new(tr("Save")));
+        self.auto.add_response("compact.save", &save, tr("Save"));
+        if save.clicked() {
+            let _ = crate::menus::invoke(self, &ctx, "file.save", json!({}));
+        }
+        self.compact_panel = Some(panel);
+        let content_top = body.min.y + height + 2.0;
+        let split = content_top + (body.max.y - content_top) * 0.58;
+        let preview = Rect::from_min_max(pos2(body.min.x, content_top), pos2(body.max.x, split));
+        let timeline = Rect::from_min_max(pos2(body.min.x, split + 2.0), body.max);
+        self.dock_rects = vec![(panel, preview), (PanelKind::Timeline, timeline)];
+        if let Some(pos) = ui.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten()) {
+            if preview.contains(pos) {
+                self.focus_panel(&ctx, panel);
+            } else if timeline.contains(pos) {
+                self.focus_panel(&ctx, PanelKind::Timeline);
+            }
+        }
+        self.panel_body(ui, panel, preview);
+        self.panel_body(ui, PanelKind::Timeline, timeline);
+    }
+
     /// Draw the Home screen or workspace in `body`. Shared craft-ui docking owns the dock tree,
     /// group chrome, tab dragging and floating native windows; this adapter draws panel bodies,
     /// applies the returned events/actions and shows the panel menu.
@@ -442,6 +489,11 @@ impl EffectcraftApp {
             panels::home::show(self, &mut child, body);
             return;
         }
+        if body.width() <= 800.0 && body.height() >= 280.0 && self.ui.dock.layout.floating.is_empty() && self.ui.maximized.is_none() {
+            self.compact_workspace(ui, body);
+            return;
+        }
+        self.compact_panel = None;
         let style = dock_style(ui, &t);
         let maximized = self.ui.maximized.filter(|m| self.ui.dock.is_docked(*m));
         let mut area = DockArea::new(area_id()).float_bounds(body).maximized(maximized).locked(self.ui.dock.locked).input_blocked(self.floats_blocked(&ctx));

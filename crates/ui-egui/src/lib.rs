@@ -494,6 +494,8 @@ pub struct EffectcraftApp {
     pub(crate) unpublished_viewports: Vec<egui::ViewportId>,
     /// A floating panel shown by a command: its window comes to the front next frame.
     pub(crate) pending_panel_raise: Option<PanelKind>,
+    /// The upper panel while the compact workspace is visible. The saved desktop dock is independent.
+    compact_panel: Option<PanelKind>,
     /// Home screen: recent-project thumbnail textures by path (None = no thumbnail).
     pub(crate) home_thumbs: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// The (project path, saved revision) whose thumbnail was stored last.

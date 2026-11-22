@@ -1017,3 +1017,14 @@ fn a_box_over_both_columns_selects_the_rows_it_crosses_and_the_keys_inside() {
     let (ls, _) = drag(pos2(10.0, 5.0), 0.0, pos2(260.0, 45.0), 20.0);
     assert_eq!(ls, [layers[0], layers[1]]);
 }
+
+#[test]
+fn narrow_timeline_reserves_room_for_scrubbing_beside_named_layers() {
+    let state = crate::state::TimelineState::default();
+    for width in [320.0, 390.0, 700.0] {
+        let outline = outline_width(width, Vis::of(&state));
+        let ruler = width - outline - GUTTER_W;
+        assert!(outline > 100.0 && ruler > outline);
+    }
+    assert!(outline_width(1500.0, Vis::of(&state)) > outline_width(700.0, Vis::of(&state)));
+}
